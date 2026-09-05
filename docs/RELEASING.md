@@ -32,12 +32,14 @@ base64 < AuthKey_XXXXXXXXXX.p8 | pbcopy
 
 ## 发布
 
-当前项目的 `MARKETING_VERSION` 是 `1.1`。发布可使用以下任一方式：
+发布版本以手动输入或 Git 标签为准，可使用以下任一方式：
 
-- 在 GitHub 的 **Actions → Release → Run workflow** 中输入 `1.1`。
-- 推送与项目版本一致的标签：`git tag v1.1 && git push origin v1.1`。
+- 在 GitHub 的 **Actions → Release → Run workflow** 中输入 `1.2`。
+- 推送发布标签：`git tag v1.2 && git push origin v1.2`。
 
-工作流会拒绝与 `MARKETING_VERSION` 不一致的版本，避免 Release、App 和 Homebrew Cask 版本漂移。发布完成后，用户可运行：
+工作流会在构建前自动同步所有 Xcode target 的 `MARKETING_VERSION` 和扩展 manifest 版本（例如 `1.2` 对应 `1.2.0`），Release 和 Homebrew Cask 使用同一发布版本。只支持 `major.minor` 或 `major.minor.patch` 纯数字版本，每段不超过 65535，不接受 `v` 前缀的手动输入或 `-beta` 等后缀。同步仅发生在 CI 工作目录，不会自动提交回仓库；`CURRENT_PROJECT_VERSION` 保持不变。
+
+修改 workflow 后，需要从包含修复的分支重新点击 **Run workflow**；旧失败任务的 **Re-run jobs** 仍可能使用旧提交中的 workflow。发布完成后，用户可运行：
 
 ```sh
 brew tap chensiyue98/tap

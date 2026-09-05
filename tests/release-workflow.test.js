@@ -22,8 +22,58 @@ test("release versions stay aligned across Xcode targets and the extension manif
   const buildVersions = [...project.matchAll(/CURRENT_PROJECT_VERSION = ([^;]+);/g)].map(match => match[1]);
 
   assert.ok(marketingVersions.length > 0, "Xcode targets must define a marketing version");
-  assert.deepEqual([...new Set(marketingVersions)], ["1.1"]);
-  assert.deepEqual([...new Set(buildVersions)], ["2"]);
-  assert.equal(manifest.version, "1.1.0");
-  assert.equal(manifest.version.split(".").slice(0, 2).join("."), marketingVersions[0]);
+  assert.equal(new Set(marketingVersions).size, 1);
+  assert.ok(buildVersions.length > 0);
+  assert.equal(new Set(buildVersions).size, 1);
+  const normalized = marketingVersions[0].split(".");
+  if (normalized.length === 2) normalized.push("0");
+  assert.equal(manifest.version, normalized.join("."));
 });
+
+// Run the actual workflow step against an isolated checkout of the version files.
+import { mkdtempSync, mkdirSync, copyFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import { spawnSync } from "node:child_process";
+
+for (const [event, input, ref, expected] of [
+  ["workflow_dispatch", "1.2", "main", "1.2"],
+  ["push", "", "v1.3.4", "1.3.4"],
+  ["workflow_dispatch", "1.2-beta", "main", null],
+  ["workflow_dispatch", "1.2\nevil", "main", null],
+]) {
+  test(`release version step: ${event} ${JSON.stringify(input || ref)}`, () => {
+    const dir = mkdtempSync(join(tmpdir(), "getv-release-"));
+    try {
+      for (const path of ["scripts", "get-v.xcodeproj", "Shared (Extension)/Resources"]) {
+        mkdirSync(join(dir, path), { recursive: true });
+      }
+      for (const path of ["scripts/set-release-version.mjs", "get-v.xcodeproj/project.pbxproj", "Shared (Extension)/Resources/manifest.json"]) {
+        copyFileSync(path, join(dir, path));
+      }
+      const workflow = readFileSync(".github/workflows/release.yml", "utf8");
+      const step = workflow.split("        run: |\n")[1].split("\n      - name:")[0]
+        .split("\n").map(line => line.slice(10)).join("\n");
+      const output = join(dir, "output");
+      const before = readFileSync(join(dir, "get-v.xcodeproj/project.pbxproj"), "utf8");
+      const result = spawnSync("bash", ["-e", "-o", "pipefail", "-c", step], {
+        cwd: dir, encoding: "utf8",
+        env: { ...process.env, GITHUB_EVENT_NAME: event, INPUT_VERSION: input, GITHUB_REF_NAME: ref, GITHUB_OUTPUT: output },
+      });
+      if (!expected) {
+        assert.notEqual(result.status, 0);
+        assert.equal(readFileSync(join(dir, "get-v.xcodeproj/project.pbxproj"), "utf8"), before);
+        return;
+      }
+      assert.equal(result.status, 0, result.stderr);
+      const project = readFileSync(join(dir, "get-v.xcodeproj/project.pbxproj"), "utf8");
+      const versions = [...project.matchAll(/MARKETING_VERSION = ([^;]+);/g)].map(match => match[1]);
+      assert.deepEqual([...new Set(versions)], [expected]);
+      const manifest = JSON.parse(readFileSync(join(dir, "Shared (Extension)/Resources/manifest.json"), "utf8"));
+      assert.equal(manifest.version, expected.split(".").length === 2 ? `${expected}.0` : expected);
+      assert.equal(readFileSync(output, "utf8"), `version=${expected}\ntag=v${expected}\n`);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+}
