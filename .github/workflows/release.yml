@@ -1,0 +1,250 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Release version (for example: 1.0)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: macos-15
+    env:
+      APPLE_TEAM_ID: 4SGGP72YQZ
+      TAP_REPOSITORY: chensiyue98/homebrew-tap
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v6
+
+      - name: Resolve and validate version
+        id: version
+        env:
+          INPUT_VERSION: ${{ inputs.version }}
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            version="${INPUT_VERSION}"
+          else
+            version="${GITHUB_REF_NAME#v}"
+          fi
+
+          if [[ ! "${version}" =~ ^[0-9]+([.][0-9]+){1,2}([.-][0-9A-Za-z.-]+)?$ ]]; then
+            echo "Invalid release version: ${version}" >&2
+            exit 1
+          fi
+
+          project_version=$(xcodebuild \
+            -project get-v.xcodeproj \
+            -scheme "get-v (macOS)" \
+            -configuration Release \
+            -showBuildSettings 2>/dev/null \
+            | awk '/MARKETING_VERSION =/ { print $3; exit }')
+
+          if [[ "${version}" != "${project_version}" ]]; then
+            echo "Release version ${version} does not match MARKETING_VERSION ${project_version}." >&2
+            exit 1
+          fi
+
+          echo "version=${version}" >> "${GITHUB_OUTPUT}"
+          echo "tag=v${version}" >> "${GITHUB_OUTPUT}"
+
+      - name: Run checks and tests
+        run: |
+          npm run check
+          npm test
+          npm run check:macos-scheme
+
+      - name: Validate release secrets
+        env:
+          DEVELOPER_ID_CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          DEVELOPER_ID_CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+          APPLE_API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          APPLE_API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          APPLE_API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+          HOMEBREW_TAP_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+        shell: bash
+        run: |
+          missing=0
+          for variable in \
+            DEVELOPER_ID_CERTIFICATE_BASE64 \
+            DEVELOPER_ID_CERTIFICATE_PASSWORD \
+            APPLE_API_KEY_BASE64 \
+            APPLE_API_KEY_ID \
+            APPLE_API_ISSUER_ID \
+            HOMEBREW_TAP_TOKEN
+          do
+            if [[ -z "${!variable}" ]]; then
+              echo "Missing required secret: ${variable}" >&2
+              missing=1
+            fi
+          done
+          exit "${missing}"
+
+      - name: Import Developer ID certificate
+        env:
+          CERTIFICATE_BASE64: ${{ secrets.DEVELOPER_ID_CERTIFICATE_BASE64 }}
+          CERTIFICATE_PASSWORD: ${{ secrets.DEVELOPER_ID_CERTIFICATE_PASSWORD }}
+        shell: bash
+        run: |
+          certificate_path="${RUNNER_TEMP}/developer-id.p12"
+          keychain_path="${RUNNER_TEMP}/app-signing.keychain-db"
+          keychain_password=$(openssl rand -hex 24)
+
+          printf '%s' "${CERTIFICATE_BASE64}" | /usr/bin/base64 -D > "${certificate_path}"
+          security create-keychain -p "${keychain_password}" "${keychain_path}"
+          security set-keychain-settings -lut 21600 "${keychain_path}"
+          security unlock-keychain -p "${keychain_password}" "${keychain_path}"
+          security import "${certificate_path}" \
+            -P "${CERTIFICATE_PASSWORD}" \
+            -A \
+            -t cert \
+            -f pkcs12 \
+            -k "${keychain_path}"
+          security set-key-partition-list \
+            -S apple-tool:,apple:,codesign: \
+            -s \
+            -k "${keychain_password}" \
+            "${keychain_path}"
+          security list-keychains -d user -s "${keychain_path}"
+          security find-identity -v -p codesigning "${keychain_path}"
+
+      - name: Build signed universal app
+        shell: bash
+        run: |
+          xcodebuild archive \
+            -project get-v.xcodeproj \
+            -scheme "get-v (macOS)" \
+            -configuration Release \
+            -destination "generic/platform=macOS" \
+            -archivePath "${RUNNER_TEMP}/GetV.xcarchive" \
+            -derivedDataPath "${RUNNER_TEMP}/DerivedData" \
+            CODE_SIGN_STYLE=Manual \
+            CODE_SIGN_IDENTITY="Developer ID Application" \
+            DEVELOPMENT_TEAM="${APPLE_TEAM_ID}"
+
+          app_path="${RUNNER_TEMP}/GetV.xcarchive/Products/Applications/get-v.app"
+          codesign --verify --deep --strict --verbose=2 "${app_path}"
+          file "${app_path}/Contents/MacOS/get-v" | grep -q "universal binary"
+
+      - name: Notarize and staple
+        env:
+          API_KEY_BASE64: ${{ secrets.APPLE_API_KEY_BASE64 }}
+          API_KEY_ID: ${{ secrets.APPLE_API_KEY_ID }}
+          API_ISSUER_ID: ${{ secrets.APPLE_API_ISSUER_ID }}
+        shell: bash
+        run: |
+          app_path="${RUNNER_TEMP}/GetV.xcarchive/Products/Applications/get-v.app"
+          submission_path="${RUNNER_TEMP}/GetV-notarization.zip"
+          api_key_path="${RUNNER_TEMP}/AuthKey_${API_KEY_ID}.p8"
+
+          printf '%s' "${API_KEY_BASE64}" | /usr/bin/base64 -D > "${api_key_path}"
+          chmod 600 "${api_key_path}"
+          ditto -c -k --keepParent "${app_path}" "${submission_path}"
+
+          xcrun notarytool submit "${submission_path}" \
+            --key "${api_key_path}" \
+            --key-id "${API_KEY_ID}" \
+            --issuer "${API_ISSUER_ID}" \
+            --wait \
+            --timeout 30m
+
+          xcrun stapler staple "${app_path}"
+          xcrun stapler validate "${app_path}"
+          spctl --assess --type execute --verbose=4 "${app_path}"
+
+      - name: Package release
+        id: package
+        env:
+          VERSION: ${{ steps.version.outputs.version }}
+        shell: bash
+        run: |
+          app_path="${RUNNER_TEMP}/GetV.xcarchive/Products/Applications/get-v.app"
+          asset_path="${RUNNER_TEMP}/GetV-${VERSION}.zip"
+          ditto -c -k --keepParent "${app_path}" "${asset_path}"
+
+          sha256=$(shasum -a 256 "${asset_path}" | awk '{ print $1 }')
+          echo "asset_path=${asset_path}" >> "${GITHUB_OUTPUT}"
+          echo "sha256=${sha256}" >> "${GITHUB_OUTPUT}"
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: ${{ steps.version.outputs.tag }}
+          VERSION: ${{ steps.version.outputs.version }}
+          ASSET_PATH: ${{ steps.package.outputs.asset_path }}
+        shell: bash
+        run: |
+          if gh release view "${TAG}" >/dev/null 2>&1; then
+            gh release upload "${TAG}" "${ASSET_PATH}" --clobber
+          else
+            gh release create "${TAG}" "${ASSET_PATH}" \
+              --target "${GITHUB_SHA}" \
+              --title "GetV ${VERSION}" \
+              --generate-notes
+          fi
+
+      - name: Update Homebrew tap
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
+          VERSION: ${{ steps.version.outputs.version }}
+          SHA256: ${{ steps.package.outputs.sha256 }}
+        shell: bash
+        run: |
+          gh auth setup-git
+          gh repo clone "${TAP_REPOSITORY}" "${RUNNER_TEMP}/homebrew-tap"
+          cask_path="${RUNNER_TEMP}/homebrew-tap/Casks/get-v.rb"
+
+          mkdir -p "$(dirname "${cask_path}")"
+          cat > "${cask_path}" <<EOF
+          cask "get-v" do
+            version "${VERSION}"
+            sha256 "${SHA256}"
+
+            url "https://github.com/chensiyue98/GetV/releases/download/v#{version}/GetV-#{version}.zip"
+            name "GetV"
+            desc "Safari extension for discovering and downloading non-DRM media"
+            homepage "https://github.com/chensiyue98/GetV"
+
+            depends_on macos: ">= :monterey"
+
+            app "get-v.app"
+
+            zap trash: [
+              "~/Library/Preferences/com.siyuechen.get-v.plist",
+            ]
+          end
+          EOF
+
+          ruby -c "${cask_path}"
+          git -C "${RUNNER_TEMP}/homebrew-tap" config user.name "github-actions[bot]"
+          git -C "${RUNNER_TEMP}/homebrew-tap" config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git -C "${RUNNER_TEMP}/homebrew-tap" add Casks/get-v.rb
+
+          if git -C "${RUNNER_TEMP}/homebrew-tap" diff --cached --quiet; then
+            echo "Homebrew Cask is already up to date."
+          else
+            git -C "${RUNNER_TEMP}/homebrew-tap" commit -m "Update GetV to ${VERSION}"
+            git -C "${RUNNER_TEMP}/homebrew-tap" push origin main
+          fi
+
+      - name: Remove signing material
+        if: always()
+        shell: bash
+        run: |
+          security delete-keychain "${RUNNER_TEMP}/app-signing.keychain-db" 2>/dev/null || true
+          rm -f \
+            "${RUNNER_TEMP}/developer-id.p12" \
+            "${RUNNER_TEMP}"/AuthKey_*.p8

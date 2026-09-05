@@ -2,6 +2,15 @@
 
 GetV 是一个面向 macOS / iOS Safari 的 Web Extension。它会从媒体元素、链接、Performance Resource Timing、`fetch`、XHR 和 MediaSource 中发现视频资源。
 
+## 安装
+
+通过 Homebrew 安装 macOS 版本：
+
+```sh
+brew tap chensiyue98/tap
+brew install --cask get-v
+```
+
 ## 已实现
 
 - 直接识别 MP4、M4V、WEBM、FLV、MP3、M4A、AAC、MOV 与 HLS/m3u8。页面中途切换或创建播放器时会通过媒体生命周期事件立即重扫；没有文件扩展名的播放地址会在后台用 MIME 和最多 64 KB 文件头验证。
@@ -35,3 +44,5 @@ npm test
 ```
 
 第三方组件及许可证位于 `Shared (Extension)/Resources/vendor/`：mux.js（Apache-2.0）和 MP4Box.js（BSD-3-Clause）。
+
+GitHub Actions 发布与签名配置见 [`docs/RELEASING.md`](docs/RELEASING.md)。
