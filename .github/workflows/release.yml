@@ -20,7 +20,7 @@ concurrency:
 
 jobs:
   release:
-    runs-on: macos-15
+    runs-on: xcode-27
     env:
       APPLE_TEAM_ID: 4SGGP72YQZ
       TAP_REPOSITORY: chensiyue98/homebrew-tap
@@ -50,7 +50,7 @@ jobs:
             -project get-v.xcodeproj \
             -scheme "get-v (macOS)" \
             -configuration Release \
-            -showBuildSettings 2>/dev/null \
+            -showBuildSettings \
             | awk '/MARKETING_VERSION =/ { print $3; exit }')
 
           if [[ "${version}" != "${project_version}" ]]; then
