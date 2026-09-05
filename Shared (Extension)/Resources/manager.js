@@ -2,6 +2,7 @@ import { chooseAudioRendition, classifyMedia, formatBytes, formatDuration, parse
 import { clearTaskParts, createQueuedTask, storeAll, storeDelete, storePut, taskParts } from "./download-db.js";
 import { buildCombinedInitializationSegment, mergeFragmentPair, rewriteFragmentTrackId } from "./mp4-mux.js";
 import { loadSettings, saveSettings } from "./settings.js";
+import { localizeDocument, t } from "./i18n.js";
 
 const active = new Map();
 const deletedTaskIds = new Set();
@@ -41,7 +42,7 @@ function parseIV(value, sequence) {
 
 async function decryptSegment(buffer, keyInfo, sequence, signal, keyCache) {
     if (!keyInfo) return buffer;
-    if (keyInfo.method !== "AES-128") throw new Error(`暂不支持加密方式 ${keyInfo.method}`);
+    if (keyInfo.method !== "AES-128") throw new Error(t("unsupported_encryption", keyInfo.method));
     if (!keyCache.has(keyInfo.url)) keyCache.set(keyInfo.url, fetchBuffer(keyInfo.url, signal).then(raw => crypto.subtle.importKey("raw", raw, "AES-CBC", false, ["decrypt"])));
     const key = await keyCache.get(keyInfo.url);
     return crypto.subtle.decrypt({ name: "AES-CBC", iv: parseIV(keyInfo.iv, sequence) }, key, buffer);
@@ -49,13 +50,13 @@ async function decryptSegment(buffer, keyInfo, sequence, signal, keyCache) {
 
 async function fetchPlaylist(url, signal, description) {
     let response = await fetch(url, { credentials: "include", cache: "no-store", signal });
-    if (!response.ok) throw new Error(`${description}请求失败 (${response.status})`);
+    if (!response.ok) throw new Error(t("playlist_request_failed", [description, String(response.status)]));
     let parsed = parseM3U8(await response.text(), response.url || url);
     return { ...parsed, resolvedURL: url };
 }
 
 async function loadPlaylists(task, signal) {
-    let master = await fetchPlaylist(task.url, signal, "视频播放列表");
+    let master = await fetchPlaylist(task.url, signal, t("video_playlist"));
     if (master.variants.length) {
         const variant = master.variants[0];
         if (!task.audioURL) {
@@ -65,9 +66,9 @@ async function loadPlaylists(task, signal) {
             task.audioLanguage = rendition?.language || "";
         }
         task.url = variant.url;
-        master = await fetchPlaylist(variant.url, signal, "清晰度播放列表");
+        master = await fetchPlaylist(variant.url, signal, t("quality_playlist"));
     } else if (!task.audioURL && task.sourceURL && task.sourceURL !== task.url) {
-        const sourceMaster = await fetchPlaylist(task.sourceURL, signal, "主播放列表");
+        const sourceMaster = await fetchPlaylist(task.sourceURL, signal, t("master_playlist"));
         const groups = [...new Set(sourceMaster.variants.map(variant => variant.audioGroup).filter(Boolean))];
         const selectedVariant = sourceMaster.variants.find(variant => variant.url === task.url) || (groups.length === 1 ? { audioGroup: groups[0] } : null);
         const rendition = chooseAudioRendition(sourceMaster, selectedVariant);
@@ -76,13 +77,13 @@ async function loadPlaylists(task, signal) {
         task.audioLanguage = rendition?.language || "";
     }
     task.audioDiscoveryDone = true;
-    if (!master.segments.length) throw new Error("视频播放列表中没有媒体分片");
+    if (!master.segments.length) throw new Error(t("video_playlist_empty"));
 
     let audio = null;
     if (task.audioURL) {
-        audio = await fetchPlaylist(task.audioURL, signal, "音频播放列表");
-        if (audio.variants.length) audio = await fetchPlaylist(audio.variants[0].url, signal, "音频媒体播放列表");
-        if (!audio.segments.length) throw new Error("音频播放列表中没有媒体分片");
+        audio = await fetchPlaylist(task.audioURL, signal, t("audio_playlist"));
+        if (audio.variants.length) audio = await fetchPlaylist(audio.variants[0].url, signal, t("audio_media_playlist"));
+        if (!audio.segments.length) throw new Error(t("audio_playlist_empty"));
     }
     return { video: master, audio };
 }
@@ -115,7 +116,7 @@ async function runDirectTask(task) {
             referrerPolicy: "strict-origin-when-cross-origin",
             signal: controller.signal
         });
-        if (!response.ok) throw new Error(`文件请求失败 (${response.status})`);
+        if (!response.ok) throw new Error(t("file_request_failed", String(response.status)));
 
         const range = parseContentRange(response.headers.get("content-range") || "");
         if (offset && (response.status !== 206 || (range && range.start !== offset))) {
@@ -124,7 +125,7 @@ async function runDirectTask(task) {
             offset = 0;
             task.bytes = 0;
             task.completedSegments = 0;
-            if (response.status === 206 && range?.start) throw new Error("服务器返回了不匹配的续传范围，请重新下载");
+            if (response.status === 206 && range?.start) throw new Error(t("resume_range_mismatch"));
         }
 
         task.mime = response.headers.get("content-type") || task.mime || "application/octet-stream";
@@ -184,7 +185,7 @@ async function runDirectTask(task) {
         }
 
         if (task.state === "running") {
-            if (task.totalBytes && task.bytes < task.totalBytes) throw new Error(`连接提前结束（${formatBytes(task.bytes)} / ${formatBytes(task.totalBytes)}）`);
+            if (task.totalBytes && task.bytes < task.totalBytes) throw new Error(t("connection_ended_early", [formatBytes(task.bytes), formatBytes(task.totalBytes)]));
             await assembleDirect(task, false);
         }
     } catch (error) {
@@ -240,7 +241,7 @@ async function runTask(task) {
                 const segment = queue[cursor++];
                 let data = await fetchBuffer(segment.url, controller.signal, segment.byteRange);
                 data = await decryptSegment(data, segment.key, segment.sequence, controller.signal, keyCache);
-                if (deletedTaskIds.has(task.id)) throw new DOMException("任务已删除", "AbortError");
+                if (deletedTaskIds.has(task.id)) throw new DOMException(t("task_deleted"), "AbortError");
                 await storePut("segments", { id: `${task.id}:${segment.track}:${segment.index}`, taskId: task.id, track: segment.track, index: segment.index, timeline: segment.timeline, duration: segment.duration || 0, blob: new Blob([data]), size: data.byteLength });
                 task.completedSegments += 1;
                 task.bytes += data.byteLength;
@@ -269,8 +270,8 @@ async function assemble(task, partial) {
     if (deletedTaskIds.has(task.id)) return;
     const videoSource = await taskSegments(task.id, "video");
     const audioSource = task.audioURL ? await taskSegments(task.id, "audio") : [];
-    if (!videoSource.length) throw new Error("没有已下载的视频分片");
-    if (task.audioURL && !audioSource.length) throw new Error("音频分片尚未下载，不能导出无声文件");
+    if (!videoSource.length) throw new Error(t("no_downloaded_video_segments"));
+    if (task.audioURL && !audioSource.length) throw new Error(t("audio_segments_missing"));
     task.state = "assembling";
     await saveTask(task);
     await clearTaskParts("outputs", task.id);
@@ -291,7 +292,7 @@ async function assemble(task, partial) {
             task.outputWarning = "";
         } catch (error) {
             parts = videoSource;
-            task.outputWarning = `TS 转 MP4 失败，已保留原始 TS：${error.message}`;
+            task.outputWarning = t("transmux_failed_kept_ts", error.message);
         }
     }
     const extension = outputContainer === "fmp4" ? "mp4" : "ts";
@@ -319,7 +320,7 @@ async function assemble(task, partial) {
                     await clearTaskParts("segments", task.id);
                     task.cacheCleared = true;
                 } catch (error) {
-                    task.outputWarning = `视频已保存，但缓存清理失败：${error.message}`;
+                    task.outputWarning = t("video_saved_cache_cleanup_failed", error.message);
                 }
             }
         }
@@ -330,7 +331,7 @@ async function assemble(task, partial) {
 async function assembleDirect(task, partial) {
     if (deletedTaskIds.has(task.id)) return;
     const parts = await taskSegments(task.id, "direct");
-    if (!parts.length) throw new Error("没有已下载的文件数据");
+    if (!parts.length) throw new Error(t("no_downloaded_file_data"));
     task.state = "assembling";
     await saveTask(task);
     const extension = task.mediaType && task.mediaType !== "unknown" ? task.mediaType : "";
@@ -356,7 +357,7 @@ async function assembleDirect(task, partial) {
                     await clearTaskParts("segments", task.id);
                     task.cacheCleared = true;
                 } catch (error) {
-                    task.outputWarning = `文件已保存，但缓存清理失败：${error.message}`;
+                    task.outputWarning = t("file_saved_cache_cleanup_failed", error.message);
                 }
             }
         }
@@ -368,7 +369,7 @@ async function assembleDirect(task, partial) {
 
 async function transmuxTrackToMP4(task, track, sourceParts) {
     const Transmuxer = globalThis.muxjs?.mp4?.Transmuxer || globalThis.muxjs?.Transmuxer;
-    if (!Transmuxer) throw new Error("转封装组件未加载");
+    if (!Transmuxer) throw new Error(t("transmuxer_not_loaded"));
     const transmuxer = new Transmuxer({ keepOriginalTimestamps: true, remux: true });
     let currentPart = null;
     let outputIndex = 0;
@@ -387,32 +388,32 @@ async function transmuxTrackToMP4(task, track, sourceParts) {
     });
     const mediaParts = sourceParts.filter(part => part.index >= 0);
     for (let index = 0; index < mediaParts.length; index += 1) {
-        if (deletedTaskIds.has(task.id)) throw new DOMException("任务已删除", "AbortError");
+        if (deletedTaskIds.has(task.id)) throw new DOMException(t("task_deleted"), "AbortError");
         currentPart = mediaParts[index];
         outputIndex = 0;
         transmuxer.push(new Uint8Array(await mediaParts[index].blob.arrayBuffer()));
         transmuxer.flush();
         await Promise.all(writes);
         writes = [];
-        task.transmuxProgress = `${track === "video" ? "视频" : "音频"} ${index + 1}/${mediaParts.length}`;
+        task.transmuxProgress = `${track === "video" ? t("video") : t("audio")} ${index + 1}/${mediaParts.length}`;
         if (index % 5 === 0) render();
     }
     const outputs = await taskOutputs(task.id, track);
-    if (!initWritten || outputs.length < 2) throw new Error("流不是受支持的 H.264/AAC MPEG-TS");
+    if (!initWritten || outputs.length < 2) throw new Error(t("unsupported_mpegts"));
     return outputs;
 }
 
 async function combineSeparateTracks(videoParts, audioParts) {
     const videoInit = videoParts.find(part => part.index < 0);
     const audioInit = audioParts.find(part => part.index < 0);
-    if (!videoInit || !audioInit) throw new Error("独立音视频流缺少 fMP4 初始化分片，无法合并");
+    if (!videoInit || !audioInit) throw new Error(t("missing_fmp4_init_segments"));
     const combined = buildCombinedInitializationSegment(
         new Uint8Array(await videoInit.blob.arrayBuffer()),
         new Uint8Array(await audioInit.blob.arrayBuffer())
     );
     const videoMedia = videoParts.filter(part => part.index >= 0).sort((a, b) => (a.timeline ?? a.index) - (b.timeline ?? b.index));
     const audioMedia = audioParts.filter(part => part.index >= 0).sort((a, b) => (a.timeline ?? a.index) - (b.timeline ?? b.index));
-    if (!videoMedia.length || !audioMedia.length) throw new Error("独立音视频流尚无足够的已下载媒体分片");
+    if (!videoMedia.length || !audioMedia.length) throw new Error(t("insufficient_separate_segments"));
 
     const output = [new Blob([combined.init])];
     let destinationOffset = combined.init.byteLength;
@@ -448,7 +449,7 @@ function pauseTask(task) {
 }
 
 async function deleteTask(task) {
-    if (!confirm(`确定从列表删除“${task.filename}”吗？\n只会移除任务并清理扩展临时缓存；已保存到磁盘的 MP4/TS 不会删除。`)) return;
+    if (!confirm(t("delete_task_confirm", task.filename))) return;
     deletedTaskIds.add(task.id);
     active.get(task.id)?.abort();
     try {
@@ -459,14 +460,14 @@ async function deleteTask(task) {
         render();
     } catch (error) {
         deletedTaskIds.delete(task.id);
-        alert(`任务删除失败：${error.message}`);
+        alert(t("delete_task_failed", error.message));
     }
 }
 
 async function clearAllTasks() {
     if (!tasks.length) return;
     const snapshot = [...tasks];
-    if (!confirm(`确定清空全部 ${snapshot.length} 个任务吗？\n只会清空列表并清理扩展临时缓存；已保存到磁盘的 MP4/TS 不会删除。`)) return;
+    if (!confirm(t("clear_all_confirm", String(snapshot.length)))) return;
     for (const task of snapshot) {
         deletedTaskIds.add(task.id);
         active.get(task.id)?.abort();
@@ -482,11 +483,11 @@ async function clearAllTasks() {
     for (const task of tasks) deletedTaskIds.delete(task.id);
     render();
     const failed = results.filter(result => result.status === "rejected");
-    if (failed.length) alert(`${failed.length} 个任务清理失败，已保留在列表中。\n${failed[0].reason?.message || failed[0].reason}`);
+    if (failed.length) alert(t("clear_tasks_failed", [String(failed.length), failed[0].reason?.message || String(failed[0].reason)]));
 }
 
 function statusText(task) {
-    return ({ queued:"等待中", running:"下载中", paused:"已暂停", assembling:"正在合并", complete:"已完成", cancelled:"已取消", error:"出错" })[task.state] || task.state;
+    return t(`status_${task.state}`) === `status_${task.state}` ? task.state : t(`status_${task.state}`);
 }
 
 function render() {
@@ -499,27 +500,27 @@ function render() {
         const isDirect = task.kind === "direct";
         node.querySelector(".task-icon").textContent = isDirect ? (task.mediaType && task.mediaType !== "unknown" ? task.mediaType : task.mediaKind || "FILE") : "HLS";
         node.querySelector("h2").textContent = task.filename;
-        const directDetails = [task.width && task.height ? `${task.width}×${task.height}` : "", task.duration ? formatDuration(task.duration) : "", task.resumable ? "支持续传" : ""].filter(Boolean).join(" · ");
+        const directDetails = [task.width && task.height ? `${task.width}×${task.height}` : "", task.duration ? formatDuration(task.duration) : "", task.resumable ? t("resumable") : ""].filter(Boolean).join(" · ");
         node.querySelector(".quality").textContent = isDirect
-            ? `${directDetails || "直链媒体"}${task.outputWarning ? ` · ${task.outputWarning}` : ""}`
-            : `${task.quality || "自动最高画质"}${task.audioName ? ` · 音频 ${task.audioName}${task.audioLanguage ? ` (${task.audioLanguage})` : ""}` : ""}${task.duration ? ` · ${formatDuration(task.duration)}` : ""}${task.liveSnapshot ? " · 直播快照" : ""}${task.outputWarning ? ` · ${task.outputWarning}` : ""}`;
+            ? `${directDetails || t("direct_media")}${task.outputWarning ? ` · ${task.outputWarning}` : ""}`
+            : `${task.quality || t("auto_highest_quality")}${task.audioName ? ` · ${t("audio")} ${task.audioName}${task.audioLanguage ? ` (${task.audioLanguage})` : ""}` : ""}${task.duration ? ` · ${formatDuration(task.duration)}` : ""}${task.liveSnapshot ? ` · ${t("live_snapshot")}` : ""}${task.outputWarning ? ` · ${task.outputWarning}` : ""}`;
         node.querySelector(".status").textContent = statusText(task);
         const percent = isDirect
             ? task.totalBytes ? Math.min(100, Math.round((task.bytes || 0) / task.totalBytes * 100)) : 0
             : task.totalSegments ? Math.round((task.completedSegments || 0) / task.totalSegments * 100) : 0;
         node.querySelector(".progress span").style.width = `${percent}%`;
         node.querySelector(".numbers").textContent = isDirect
-            ? task.cacheCleared ? "缓存已清理" : `${formatBytes(task.bytes)} / ${task.totalBytes ? formatBytes(task.totalBytes) : "大小未知"}`
-            : `${task.completedSegments || 0} / ${task.totalSegments || "?"} 分片 · ${task.cacheCleared ? "缓存已清理" : formatBytes(task.bytes)}${task.transmuxProgress && task.state === "assembling" ? ` · 转封装 ${task.transmuxProgress}` : ""}`;
+            ? task.cacheCleared ? t("cache_cleared") : `${formatBytes(task.bytes)} / ${task.totalBytes ? formatBytes(task.totalBytes) : t("unknown_size")}`
+            : `${task.completedSegments || 0} / ${task.totalSegments || "?"} ${t(task.totalSegments === 1 ? "segment" : "segments")} · ${task.cacheCleared ? t("cache_cleared") : formatBytes(task.bytes)}${task.transmuxProgress && task.state === "assembling" ? ` · ${t("transmuxing")} ${task.transmuxProgress}` : ""}`;
         node.querySelector(".speed").textContent = task.speed ? `${formatBytes(task.speed)}/s` : `${percent}%`;
         node.querySelector(".error").textContent = task.error || "";
         const toggle = node.querySelector('[data-action="toggle"]');
         const needsAudioCheck = !isDirect && task.state === "complete" && task.sourceURL && !task.audioDiscoveryDone;
-        toggle.textContent = task.state === "running" ? "暂停" : needsAudioCheck ? "检测并补齐音轨" : task.state === "complete" && task.cacheCleared ? "重新下载" : task.state === "complete" ? "重新导出" : "继续";
+        toggle.textContent = task.state === "running" ? t("pause") : needsAudioCheck ? t("detect_audio_track") : task.state === "complete" && task.cacheCleared ? t("download_again") : task.state === "complete" ? t("export_again") : t("resume");
         toggle.addEventListener("click", () => task.state === "running" ? pauseTask(task) : needsAudioCheck || (task.state === "complete" && task.cacheCleared) ? runTask(task) : task.state === "complete" ? assemble(task, false) : runTask(task));
         node.querySelector('[data-action="partial"]').addEventListener("click", () => assemble(task, true).catch(error => alert(error.message)));
         node.querySelector('[data-action="rename"]').addEventListener("click", async () => {
-            const value = prompt("新的文件名", task.filename);
+            const value = prompt(t("new_filename"), task.filename);
             const extension = isDirect
                 ? (task.mediaType !== "unknown" ? task.mediaType : "")
                 : ((task.outputContainer || task.container) === "mpegts" && !task.audioURL ? "ts" : "mp4");
@@ -550,6 +551,7 @@ async function migrateLegacyPendingJobs() {
 }
 
 async function start() {
+    localizeDocument();
     navigator.storage?.persist?.().catch(() => false);
     const settings = await loadSettings();
     document.querySelector("#global-concurrency").value = String(settings.downloadThreads);
@@ -561,11 +563,11 @@ async function start() {
     const queued = requested ? tasks.find(task => task.id === requested) : tasks.find(task => task.state === "queued");
     if (queued) runTask(queued);
     document.querySelector("#resume-all").addEventListener("click", () => tasks.filter(task => ["paused", "queued", "error"].includes(task.state)).forEach(runTask));
-    document.querySelector("#clear-all").addEventListener("click", () => clearAllTasks().catch(error => alert(`清空失败：${error.message}`)));
+    document.querySelector("#clear-all").addEventListener("click", () => clearAllTasks().catch(error => alert(t("clear_failed", error.message))));
     document.querySelector("#global-concurrency").addEventListener("change", async event => {
         await saveSettings({ downloadThreads: Number(event.target.value) });
         tasks.forEach(task => { if (task.state !== "running") task.concurrency = Number(event.target.value); });
     });
 }
 
-start().catch(error => alert(`下载管理器初始化失败：${error.message}`));
+start().catch(error => alert(t("manager_init_failed", error.message)));

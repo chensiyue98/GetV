@@ -2,6 +2,7 @@ import { candidateKey, classifyMedia, collapseDuplicateMediaEntries, filterMedia
 import { createQueuedTask, storePut } from "./download-db.js";
 import { identifyMediaCandidate } from "./media-probe.js";
 import { DEFAULT_SETTINGS, loadSettings, SETTINGS_KEY } from "./settings.js";
+import { t } from "./i18n.js";
 
 const candidatesByTab = new Map();
 const recordingByTab = new Map();
@@ -40,7 +41,7 @@ function bestMediaFrame(tabId) {
 
 async function probeHLS(url) {
     const response = await fetch(url, { credentials: "include", cache: "no-store" });
-    if (!response.ok) throw new Error(`播放列表请求失败 (${response.status})`);
+    if (!response.ok) throw new Error(t("playlist_probe_failed", String(response.status)));
     const playlist = parseM3U8(await response.text(), response.url || url);
     return { ...playlist, url: response.url || url };
 }
@@ -91,16 +92,16 @@ browser.runtime.onMessage.addListener((message, sender) => {
         await storePut("tasks", task);
         await browser.tabs.create({ url: browser.runtime.getURL(`manager.html#${task.id}`) });
         return { ok: true, id: task.id };
-    })().catch(error => ({ ok: false, error: `无法创建下载任务：${error.message}` }));
+    })().catch(error => ({ ok: false, error: t("create_download_failed_detail", error.message) }));
     if (message.type === "QUEUE_HLS") return (async () => {
         const settings = await loadSettings();
         const task = createQueuedTask({ ...message.job, concurrency: message.job.concurrency || settings.downloadThreads });
         await storePut("tasks", task);
         await browser.tabs.create({ url: browser.runtime.getURL(`manager.html#${task.id}`) });
         return { ok: true, id: task.id };
-    })().catch(error => ({ ok: false, error: `无法创建下载任务：${error.message}` }));
+    })().catch(error => ({ ok: false, error: t("create_download_failed_detail", error.message) }));
     if (message.type === "RECORD") return activeTab().then(async tab => {
-        if (!tab) return { ok: false, error: "没有活动标签页" };
+        if (!tab) return { ok: false, error: t("no_active_tab") };
         const result = await browser.tabs.sendMessage(tab.id, { type: "RECORD_COMMAND", command: message.command, options: message.options || {} }, { frameId: bestMediaFrame(tab.id) }).catch(error => ({ ok: false, error: error.message }));
         if (message.command === "record-start") recordingByTab.set(tab.id, { recording: true, paused: false, bytes: 0, chunks: 0 });
         else if (message.command === "record-pause") recordingByTab.set(tab.id, { ...(recordingByTab.get(tab.id) || {}), paused: true });

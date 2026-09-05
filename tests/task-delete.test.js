@@ -14,7 +14,9 @@ test("download manager exposes permanent task deletion and clears persisted data
 test("download manager can clear the whole task list without deleting exported files", () => {
     const html = fs.readFileSync(new URL("../Shared (Extension)/Resources/manager.html", import.meta.url), "utf8");
     const source = fs.readFileSync(new URL("../Shared (Extension)/Resources/manager.js", import.meta.url), "utf8");
+    const chinese = fs.readFileSync(new URL("../Shared (Extension)/Resources/_locales/zh_CN/messages.json", import.meta.url), "utf8");
     assert.match(html, /id="clear-all"/, "manager needs a one-click clear control");
     assert.match(source, /async function clearAllTasks\(\)/, "manager needs a bulk deletion operation");
-    assert.match(source, /已保存到磁盘的 MP4\/TS 不会删除/, "the UI must state that exported files are untouched");
+    assert.match(source, /t\("clear_all_confirm"/, "the confirmation must be localized");
+    assert.match(chinese, /已保存到磁盘的 MP4\/TS 不会删除/, "the UI must state that exported files are untouched");
 });

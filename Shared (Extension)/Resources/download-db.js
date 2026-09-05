@@ -2,7 +2,7 @@ export const DOWNLOAD_DB_NAME = "getv-downloads";
 export const DOWNLOAD_DB_VERSION = 2;
 
 export function openDownloadDB(factory = globalThis.indexedDB) {
-    if (!factory) return Promise.reject(new Error("当前浏览器不支持 IndexedDB"));
+    if (!factory) return Promise.reject(new Error(t("indexeddb_unsupported")));
     return new Promise((resolve, reject) => {
         const request = factory.open(DOWNLOAD_DB_NAME, DOWNLOAD_DB_VERSION);
         request.onupgradeneeded = () => {
@@ -18,7 +18,7 @@ export function openDownloadDB(factory = globalThis.indexedDB) {
             }
         };
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error || new Error("无法打开下载数据库"));
+        request.onerror = () => reject(request.error || new Error(t("database_open_failed")));
     });
 }
 
@@ -28,8 +28,8 @@ export async function storePut(name, value, factory) {
         const transaction = db.transaction(name, "readwrite");
         transaction.objectStore(name).put(value);
         transaction.oncomplete = () => resolve(value);
-        transaction.onerror = () => reject(transaction.error || new Error(`无法写入 ${name}`));
-        transaction.onabort = () => reject(transaction.error || new Error(`写入 ${name} 已中止`));
+        transaction.onerror = () => reject(transaction.error || new Error(t("store_write_failed", name)));
+        transaction.onabort = () => reject(transaction.error || new Error(t("store_write_aborted", name)));
     });
 }
 
@@ -38,7 +38,7 @@ export async function storeAll(name, factory) {
     return new Promise((resolve, reject) => {
         const request = db.transaction(name).objectStore(name).getAll();
         request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error || new Error(`无法读取 ${name}`));
+        request.onerror = () => reject(request.error || new Error(t("store_read_failed", name)));
     });
 }
 
@@ -48,8 +48,8 @@ export async function storeDelete(name, key, factory) {
         const transaction = db.transaction(name, "readwrite");
         transaction.objectStore(name).delete(key);
         transaction.oncomplete = resolve;
-        transaction.onerror = () => reject(transaction.error || new Error(`无法删除 ${name}`));
-        transaction.onabort = () => reject(transaction.error || new Error(`删除 ${name} 已中止`));
+        transaction.onerror = () => reject(transaction.error || new Error(t("store_delete_failed", name)));
+        transaction.onabort = () => reject(transaction.error || new Error(t("store_delete_aborted", name)));
     });
 }
 
@@ -58,7 +58,7 @@ export async function taskParts(storeName, taskId, factory) {
     return new Promise((resolve, reject) => {
         const request = db.transaction(storeName).objectStore(storeName).index("taskId").getAll(taskId);
         request.onsuccess = () => resolve(request.result.sort((a, b) => a.index - b.index));
-        request.onerror = () => reject(request.error || new Error(`无法读取 ${storeName}`));
+        request.onerror = () => reject(request.error || new Error(t("store_read_failed", storeName)));
     });
 }
 
@@ -69,7 +69,7 @@ export async function clearTaskParts(storeName, taskId, factory) {
         const transaction = db.transaction(storeName, "readwrite");
         for (const item of items) transaction.objectStore(storeName).delete(item.id);
         transaction.oncomplete = resolve;
-        transaction.onerror = () => reject(transaction.error || new Error(`无法清理 ${storeName}`));
+        transaction.onerror = () => reject(transaction.error || new Error(t("store_clear_failed", storeName)));
     });
 }
 
@@ -85,3 +85,4 @@ export function createQueuedTask(job, id = crypto.randomUUID(), createdAt = Date
         speed: 0
     };
 }
+import { t } from "./i18n.js";

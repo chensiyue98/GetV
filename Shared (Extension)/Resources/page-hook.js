@@ -52,7 +52,7 @@
     }
 
     const downloadCapture = (requestedName, keepPartial = true) => {
-        if (!chunks.length) return { ok: false, error: "尚未捕获到播放器缓冲数据" };
+        if (!chunks.length) return { ok: false, errorCode: "no_captured_data" };
         const baseMime = mimeType.split(";")[0] || "video/mp4";
         const extension = baseMime.includes("webm") ? "webm" : "mp4";
         const safe = String(requestedName || `recording-${Date.now()}`).replace(/[\\/:*?\"<>|]/g, " ").trim();

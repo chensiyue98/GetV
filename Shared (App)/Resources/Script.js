@@ -2,10 +2,11 @@ function show(platform, enabled, useSettingsInsteadOfPreferences) {
     document.body.classList.add(`platform-${platform}`);
 
     if (useSettingsInsteadOfPreferences) {
-        document.getElementsByClassName('platform-mac state-on')[0].innerText = "get-v’s extension is currently on. You can turn it off in the Extensions section of Safari Settings.";
-        document.getElementsByClassName('platform-mac state-off')[0].innerText = "get-v’s extension is currently off. You can turn it on in the Extensions section of Safari Settings.";
-        document.getElementsByClassName('platform-mac state-unknown')[0].innerText = "You can turn on get-v’s extension in the Extensions section of Safari Settings.";
-        document.getElementsByClassName('platform-mac open-preferences')[0].innerText = "Quit and Open Safari Settings…";
+        const zh = document.documentElement.lang.toLowerCase().startsWith("zh");
+        document.getElementsByClassName('platform-mac state-on')[0].innerText = zh ? "GetV 扩展当前已开启。你可以在 Safari 设置的“扩展”部分将其关闭。" : "GetV’s extension is currently on. You can turn it off in the Extensions section of Safari Settings.";
+        document.getElementsByClassName('platform-mac state-off')[0].innerText = zh ? "GetV 扩展当前已关闭。你可以在 Safari 设置的“扩展”部分将其开启。" : "GetV’s extension is currently off. You can turn it on in the Extensions section of Safari Settings.";
+        document.getElementsByClassName('platform-mac state-unknown')[0].innerText = zh ? "你可以在 Safari 设置的“扩展”部分开启 GetV。" : "You can turn on GetV’s extension in the Extensions section of Safari Settings.";
+        document.getElementsByClassName('platform-mac open-preferences')[0].innerText = zh ? "退出并打开 Safari 设置…" : "Quit and Open Safari Settings…";
     }
 
     if (typeof enabled === "boolean") {

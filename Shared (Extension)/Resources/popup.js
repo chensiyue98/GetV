@@ -1,5 +1,6 @@
 import { audioRenditionsForVariant, chooseAudioRendition, collapseDuplicateMediaEntries, collapseHLSProbeEntries, compactMediaURL, filterMediaEntries, formatBytes, formatDuration, safeFilename } from "./core.js";
 import { DEFAULT_SETTINGS, loadSettings, saveSettings } from "./settings.js";
+import { localizeDocument, t } from "./i18n.js";
 
 const $ = selector => document.querySelector(selector);
 let state = { tab: null, candidates: [], recording: null };
@@ -15,8 +16,8 @@ function toast(message) {
 }
 
 function displayName(candidate) {
-    try { return decodeURIComponent(new URL(candidate.url).pathname.split("/").pop()) || candidate.pageTitle || "视频"; }
-    catch { return candidate.pageTitle || "视频"; }
+    try { return decodeURIComponent(new URL(candidate.url).pathname.split("/").pop()) || candidate.pageTitle || t("video"); }
+    catch { return candidate.pageTitle || t("video"); }
 }
 
 function preferredName(candidate) {
@@ -25,12 +26,12 @@ function preferredName(candidate) {
 
 async function startDownload(candidate, button, streamOptions = {}) {
     button.disabled = true;
-    button.textContent = "处理中…";
+    button.textContent = t("processing");
     try {
         if (candidate.type === "hls") {
             const { qualitySelect, audioSelect, playlist } = streamOptions;
             const selectedURL = qualitySelect?.value || candidate.url;
-            const selectedLabel = qualitySelect?.selectedOptions[0]?.textContent || "最高画质";
+            const selectedLabel = qualitySelect?.selectedOptions[0]?.textContent || t("highest_quality");
             const variant = playlist?.variants?.find(item => item.url === selectedURL) || null;
             const renditions = audioRenditionsForVariant(playlist, variant);
             const selectedAudio = renditions[Number(audioSelect?.value)] || chooseAudioRendition(playlist, variant);
@@ -46,7 +47,7 @@ async function startDownload(candidate, button, streamOptions = {}) {
                 concurrency: settings.downloadThreads
             }});
             if (response?.ok) window.close();
-            else toast(response?.error || "无法创建下载任务");
+            else toast(response?.error || t("create_download_failed"));
         } else {
             const result = await browser.runtime.sendMessage({
                 type: "DOWNLOAD_DIRECT",
@@ -63,13 +64,13 @@ async function startDownload(candidate, button, streamOptions = {}) {
                 unverified: candidate.unverified
             });
             if (result?.ok) window.close();
-            else toast(result?.error || "下载失败");
+            else toast(result?.error || t("download_failed"));
         }
     } catch (error) {
-        toast(error.message || "下载失败");
+        toast(error.message || t("download_failed"));
     } finally {
         button.disabled = false;
-        button.textContent = "下载";
+        button.textContent = t("download");
     }
 }
 
@@ -77,7 +78,7 @@ function renderCandidate(candidate, playlist = null) {
     const card = document.createElement("article");
     card.className = "media-card";
     card.innerHTML = `<div class="media-top"><div class="type-icon"></div><div class="media-copy"><div class="media-title"></div><div class="media-meta"></div><div class="media-url"></div></div></div><div class="quality-row"></div>`;
-    card.querySelector(".type-icon").textContent = candidate.type === "unknown" ? candidate.mediaKind || "media" : candidate.type;
+    card.querySelector(".type-icon").textContent = candidate.type === "unknown" ? t(candidate.mediaKind || "media") : candidate.type;
     card.querySelector(".media-title").textContent = displayName(candidate);
     const urlLabel = card.querySelector(".media-url");
     urlLabel.textContent = compactMediaURL(candidate.url);
@@ -85,7 +86,8 @@ function renderCandidate(candidate, playlist = null) {
     const meta = [];
     if (candidate.width && candidate.height) meta.push(`${candidate.width}×${candidate.height}`);
     if (candidate.duration) meta.push(formatDuration(candidate.duration));
-    meta.push(candidate.source || "页面资源");
+    const sourceKey = ["player", "element", "source", "link", "performance", "fetch", "xhr", "network"].includes(candidate.source) ? `source_${candidate.source}` : "page_resource";
+    meta.push(t(sourceKey));
     card.querySelector(".media-meta").textContent = meta.join(" · ");
     const row = card.querySelector(".quality-row");
     let qualitySelect = null;
@@ -94,10 +96,10 @@ function renderCandidate(candidate, playlist = null) {
         const selects = document.createElement("div");
         selects.className = "stream-selects";
         qualitySelect = document.createElement("select");
-        qualitySelect.setAttribute("aria-label", "视频清晰度");
+        qualitySelect.setAttribute("aria-label", t("video_quality"));
         const automatic = document.createElement("option");
         automatic.value = candidate.url;
-        automatic.textContent = "自动选择最高画质";
+        automatic.textContent = t("auto_highest_quality");
         qualitySelect.appendChild(automatic);
         selects.appendChild(qualitySelect);
         row.appendChild(selects);
@@ -106,12 +108,12 @@ function renderCandidate(candidate, playlist = null) {
             playlist.variants.forEach((variant, index) => {
                 const option = document.createElement("option");
                 option.value = variant.url;
-                option.textContent = `${variant.height ? `${variant.height}p` : variant.name || "自适应"}${variant.bandwidth ? ` · ${(variant.bandwidth / 1e6).toFixed(1)} Mbps` : ""}${index === 0 ? "（最高）" : ""}`;
+                option.textContent = `${variant.height ? `${variant.height}p` : variant.name || t("adaptive")}${variant.bandwidth ? ` · ${(variant.bandwidth / 1e6).toFixed(1)} Mbps` : ""}${index === 0 ? t("highest_suffix") : ""}`;
                 qualitySelect.appendChild(option);
             });
             audioSelect = document.createElement("select");
             audioSelect.className = "audio-select";
-            audioSelect.setAttribute("aria-label", "音轨");
+            audioSelect.setAttribute("aria-label", t("audio_track"));
             const updateAudioOptions = () => {
                 const variant = playlist.variants.find(item => item.url === qualitySelect.value);
                 const renditions = audioRenditionsForVariant(playlist, variant);
@@ -119,7 +121,7 @@ function renderCandidate(candidate, playlist = null) {
                 for (const [index, rendition] of renditions.entries()) {
                     const option = document.createElement("option");
                     option.value = String(index);
-                    option.textContent = `音频 · ${rendition.name}${rendition.language ? ` (${rendition.language})` : ""}${rendition.url ? "" : " · 内嵌"}`;
+                    option.textContent = `${t("audio")} · ${rendition.name}${rendition.language ? ` (${rendition.language})` : ""}${rendition.url ? "" : ` · ${t("embedded")}`}`;
                     audioSelect.appendChild(option);
                 }
                 const preferred = chooseAudioRendition(playlist, variant);
@@ -130,12 +132,12 @@ function renderCandidate(candidate, playlist = null) {
             qualitySelect.addEventListener("change", updateAudioOptions);
             selects.appendChild(audioSelect);
             updateAudioOptions();
-        } else if (playlist?.segments?.length) qualitySelect.firstElementChild.textContent = `原始流 · ${formatDuration(playlist.duration)}`;
-        else if (playlist?.error) qualitySelect.firstElementChild.textContent = "HLS（点击重试）";
+        } else if (playlist?.segments?.length) qualitySelect.firstElementChild.textContent = `${t("original_stream")} · ${formatDuration(playlist.duration)}`;
+        else if (playlist?.error) qualitySelect.firstElementChild.textContent = t("hls_retry");
     }
     const button = document.createElement("button");
     button.className = "download-button";
-    button.textContent = "下载";
+    button.textContent = t("download");
     button.addEventListener("click", () => startDownload(candidate, button, { qualitySelect, audioSelect, playlist }));
     row.appendChild(button);
     $("#media-list").appendChild(card);
@@ -143,9 +145,9 @@ function renderCandidate(candidate, playlist = null) {
 
 async function refresh() {
     $("#media-list").replaceChildren();
-    $("#count").textContent = "正在扫描…";
+    $("#count").textContent = t("scanning_ellipsis");
     state = await browser.runtime.sendMessage({ type: "GET_MEDIA" });
-    $("#page-title").textContent = state.tab?.title || "当前页面不可访问";
+    $("#page-title").textContent = state.tab?.title || t("page_unavailable");
     $("#record-name").value ||= (state.tab?.title || "recording").slice(0, 150);
     const probed = await Promise.all(state.candidates.map(async candidate => ({
         candidate,
@@ -155,11 +157,11 @@ async function refresh() {
     const visible = filterMediaEntries(discovered, settings);
     const hiddenCount = discovered.length - visible.length;
     $("#count").textContent = visible.length
-        ? `发现 ${visible.length} 个资源${hiddenCount ? `（已隐藏 ${hiddenCount} 个）` : ""}`
-        : hiddenCount ? `已隐藏 ${hiddenCount} 个资源` : "没有发现资源";
+        ? t(hiddenCount ? (visible.length === 1 ? "resource_found_hidden" : "resources_found_hidden") : (visible.length === 1 ? "resource_found" : "resources_found"), [String(visible.length), String(hiddenCount)])
+        : hiddenCount ? t(hiddenCount === 1 ? "resource_hidden" : "resources_hidden", String(hiddenCount)) : t("no_resources_found");
     $("#empty").hidden = Boolean(visible.length);
-    $("#empty-title").textContent = hiddenCount ? "资源已被过滤" : "暂未发现媒体资源";
-    $("#empty-help").textContent = hiddenCount ? "可在“设置”中降低过滤条件或关闭资源过滤。" : "请先播放视频几秒钟，再点“重新扫描”。";
+    $("#empty-title").textContent = hiddenCount ? t("resources_filtered") : t("no_media_found");
+    $("#empty-help").textContent = hiddenCount ? t("resources_filtered_help") : t("no_media_help");
     visible.forEach(entry => renderCandidate(entry.candidate, entry.playlist));
     updateRecordUI();
 }
@@ -168,16 +170,16 @@ function updateRecordUI() {
     const record = state.recording || {};
     const active = Boolean(record.recording);
     $(".record-card").classList.toggle("recording", active && !record.paused);
-    $("#record-title").textContent = active ? (record.paused ? "捕获已暂停" : "正在捕获缓冲") : "捕获播放器缓冲";
-    $("#record-stats").textContent = active || record.bytes ? `${formatBytes(record.bytes)} · ${record.chunks || 0} 个分片` : "尚未开始";
-    $("#record-primary").textContent = active ? (record.paused ? "继续捕获" : "暂停") : "开始捕获";
+    $("#record-title").textContent = active ? (record.paused ? t("capture_paused") : t("capturing_buffer")) : t("capture_player_buffer");
+    $("#record-stats").textContent = active || record.bytes ? t(record.chunks === 1 ? "captured_segment" : "captured_segments", [formatBytes(record.bytes), String(record.chunks || 0)]) : t("not_started");
+    $("#record-primary").textContent = active ? (record.paused ? t("resume_capture") : t("pause")) : t("start_capture");
     $("#record-save").hidden = !active;
     $("#record-cancel").hidden = !active;
 }
 
 async function recordAction(command, options = {}) {
     const result = await browser.runtime.sendMessage({ type: "RECORD", command, options });
-    if (!result?.ok) toast(result?.error || "操作失败，请刷新页面后重试");
+    if (!result?.ok) toast(result?.error || t("operation_failed_retry"));
     await refresh();
 }
 
@@ -208,7 +210,7 @@ async function initializeSettings() {
             minVideoHeight: Number($("#setting-min-height").value),
             minMediaDuration: Number($("#setting-min-duration").value)
         });
-        toast("设置已保存");
+        toast(t("settings_saved"));
     };
     const filterControls = new Set(["#setting-filter-enabled", "#setting-min-height", "#setting-min-duration"]);
     for (const id of ["#setting-threads", "#setting-auto-save", "#setting-clear-cache", "#setting-file-naming", "#setting-show-badge", ...filterControls]) {
@@ -216,12 +218,13 @@ async function initializeSettings() {
             if (id === "#setting-filter-enabled") syncFilterControls();
             persist()
                 .then(() => filterControls.has(id) ? refresh() : null)
-                .catch(error => toast(`设置保存失败：${error.message}`));
+                .catch(error => toast(t("settings_save_failed", error.message)));
         });
     }
 }
 
 document.addEventListener("DOMContentLoaded", async () => {
+    localizeDocument();
     document.querySelectorAll(".tab").forEach(tab => tab.addEventListener("click", () => {
         document.querySelectorAll(".tab, .panel").forEach(node => node.classList.remove("active"));
         tab.classList.add("active");
@@ -236,10 +239,10 @@ document.addEventListener("DOMContentLoaded", async () => {
     });
     $("#record-save").addEventListener("click", () => recordAction("record-stop", { filename: $("#record-name").value, keepPartial: !settings.clearCacheAfterSave }));
     $("#record-cancel").addEventListener("click", () => {
-        const savePartial = confirm("要先保存已经捕获的部分吗？");
+        const savePartial = confirm(t("save_captured_partial_confirm"));
         recordAction("record-cancel", { filename: $("#record-name").value, savePartial });
     });
     try { await initializeSettings(); }
-    catch (error) { toast(`设置读取失败：${error.message}`); }
+    catch (error) { toast(t("settings_load_failed", error.message)); }
     refresh();
 });

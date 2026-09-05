@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="zh-CN">
+<html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
@@ -8,77 +8,77 @@
 </head>
 <body>
     <header>
-        <div class="brand"><span class="logo">V</span><div><strong>GetV</strong><small id="page-title">正在扫描页面…</small></div></div>
-        <button id="open-manager" class="icon-button" title="下载管理">↗</button>
+        <div class="brand"><span class="logo">V</span><div><strong>GetV</strong><small id="page-title" data-i18n="scanning_page">Scanning page…</small></div></div>
+        <button id="open-manager" class="icon-button" title="Download manager" data-i18n-title="download_manager">↗</button>
     </header>
-    <nav aria-label="模式">
-        <button class="tab active" data-panel="direct">直接下载</button>
-        <button class="tab" data-panel="record">录制模式</button>
-        <button class="tab" data-panel="settings">设置</button>
+    <nav aria-label="Mode" data-i18n-aria-label="mode">
+        <button class="tab active" data-panel="direct" data-i18n="direct_download">Direct download</button>
+        <button class="tab" data-panel="record" data-i18n="record_mode">Record mode</button>
+        <button class="tab" data-panel="settings" data-i18n="settings">Settings</button>
     </nav>
     <main>
         <section id="direct" class="panel active">
-            <div class="section-heading"><span id="count">扫描中</span><button id="refresh" class="text-button">重新扫描</button></div>
+            <div class="section-heading"><span id="count" data-i18n="scanning">Scanning</span><button id="refresh" class="text-button" data-i18n="rescan">Rescan</button></div>
             <div id="media-list" class="media-list"></div>
             <div id="empty" class="empty" hidden>
                 <div class="radar">⌁</div>
-                <strong id="empty-title">暂未发现媒体资源</strong>
-                <p id="empty-help">请先播放视频几秒钟，再点“重新扫描”。</p>
+                <strong id="empty-title" data-i18n="no_media_found">No media found yet</strong>
+                <p id="empty-help" data-i18n="no_media_help">Play the video for a few seconds, then select “Rescan”.</p>
             </div>
         </section>
         <section id="record" class="panel">
             <div class="record-card">
                 <div class="record-icon"><span></span></div>
-                <h2 id="record-title">捕获播放器缓冲</h2>
-                <p id="record-help">开启后播放视频，GetV 会保存播放器新追加的无 DRM 媒体分片。</p>
-                <div id="record-stats" class="stats">尚未开始</div>
-                <input id="record-name" type="text" placeholder="视频文件名" maxlength="160">
+                <h2 id="record-title" data-i18n="capture_player_buffer">Capture the player buffer</h2>
+                <p id="record-help" data-i18n="record_help">After capture starts, play the video and GetV will save new non-DRM media segments added by the player.</p>
+                <div id="record-stats" class="stats" data-i18n="not_started">Not started</div>
+                <input id="record-name" type="text" placeholder="Video filename" data-i18n-placeholder="video_filename" maxlength="160">
                 <div class="record-actions">
-                    <button id="record-primary" class="primary">开始捕获</button>
-                    <button id="record-save" class="secondary" hidden>停止并保存</button>
+                    <button id="record-primary" class="primary" data-i18n="start_capture">Start capture</button>
+                    <button id="record-save" class="secondary" hidden data-i18n="stop_and_save">Stop and save</button>
                 </div>
-                <button id="record-cancel" class="danger-link" hidden>取消（可保存已捕获部分）</button>
+                <button id="record-cancel" class="danger-link" hidden data-i18n="cancel_capture">Cancel (captured data can be saved)</button>
             </div>
-            <div class="notice">Safari 无法回读扩展注入前的 MSE 缓冲，也不能解密 FairPlay/DRM 内容。请刷新页面后尽早开始捕获。</div>
+            <div class="notice" data-i18n="record_notice">Safari cannot read MSE data buffered before the extension was injected or decrypt FairPlay/DRM content. Refresh the page and start capture early.</div>
         </section>
         <section id="settings" class="panel">
             <div class="settings-card">
                 <div class="setting-row">
-                    <label for="setting-threads"><strong>Download Threads</strong><small>新建 HLS 任务的分片并发数</small></label>
-                    <select id="setting-threads" aria-label="下载线程数"><option>2</option><option>4</option><option>6</option><option>8</option><option>12</option></select>
+                    <label for="setting-threads"><strong data-i18n="download_threads">Download Threads</strong><small data-i18n="download_threads_help">Concurrent segments for new HLS tasks</small></label>
+                    <select id="setting-threads" aria-label="Download threads" data-i18n-aria-label="download_threads"><option>2</option><option>4</option><option>6</option><option>8</option><option>12</option></select>
                 </div>
                 <div class="setting-row">
-                    <label for="setting-auto-save"><strong>Auto Save</strong><small>直接保存到 Safari 默认下载位置</small></label>
+                    <label for="setting-auto-save"><strong data-i18n="auto_save">Auto Save</strong><small data-i18n="auto_save_help">Save directly to Safari’s default download location</small></label>
                     <label class="switch"><input id="setting-auto-save" type="checkbox"><span aria-hidden="true"></span></label>
                 </div>
                 <div class="setting-row">
-                    <label for="setting-clear-cache"><strong>Clear Cache</strong><small>保存完整视频后清除扩展分片缓存</small></label>
+                    <label for="setting-clear-cache"><strong data-i18n="clear_cache">Clear Cache</strong><small data-i18n="clear_cache_help">Clear cached segments after a complete video is saved</small></label>
                     <label class="switch"><input id="setting-clear-cache" type="checkbox"><span aria-hidden="true"></span></label>
                 </div>
                 <div class="setting-row setting-row-stack">
-                    <label for="setting-file-naming"><strong>File Naming</strong><small>下载文件的默认命名来源</small></label>
-                    <select id="setting-file-naming"><option value="webpage-title">Webpage Title</option><option value="resource-filename">Resource Filename</option></select>
+                    <label for="setting-file-naming"><strong data-i18n="file_naming">File Naming</strong><small data-i18n="file_naming_help">Default source for downloaded filenames</small></label>
+                    <select id="setting-file-naming"><option value="webpage-title" data-i18n="webpage_title">Webpage Title</option><option value="resource-filename" data-i18n="resource_filename">Resource Filename</option></select>
                 </div>
-                <div class="settings-group-title">界面</div>
+                <div class="settings-group-title" data-i18n="interface">Interface</div>
                 <div class="setting-row">
-                    <label for="setting-show-badge"><strong>显示工具栏角标</strong><small>在扩展图标上显示发现的资源数</small></label>
+                    <label for="setting-show-badge"><strong data-i18n="show_badge">Show Toolbar Badge</strong><small data-i18n="show_badge_help">Show the number of detected resources on the extension icon</small></label>
                     <label class="switch"><input id="setting-show-badge" type="checkbox"><span aria-hidden="true"></span></label>
                 </div>
-                <div class="settings-group-title">资源过滤</div>
+                <div class="settings-group-title" data-i18n="resource_filtering">Resource Filtering</div>
                 <div class="setting-row">
-                    <label for="setting-filter-enabled"><strong>启用过滤</strong><small>隐藏短时、低分辨率的预览资源</small></label>
+                    <label for="setting-filter-enabled"><strong data-i18n="enable_filtering">Enable Filtering</strong><small data-i18n="enable_filtering_help">Hide short, low-resolution preview resources</small></label>
                     <label class="switch"><input id="setting-filter-enabled" type="checkbox"><span aria-hidden="true"></span></label>
                 </div>
                 <div class="setting-row setting-row-stack">
-                    <label for="setting-min-height"><strong>最低视频分辨率</strong><small>仅在资源尺寸已知时生效</small></label>
-                    <select id="setting-min-height"><option value="0">不限制</option><option value="144">144p</option><option value="240">240p</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option></select>
+                    <label for="setting-min-height"><strong data-i18n="minimum_resolution">Minimum Video Resolution</strong><small data-i18n="known_size_only">Only applies when the resource dimensions are known</small></label>
+                    <select id="setting-min-height"><option value="0" data-i18n="no_limit">No limit</option><option value="144">144p</option><option value="240">240p</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option></select>
                 </div>
                 <div class="setting-row setting-row-stack">
-                    <label for="setting-min-duration"><strong>最短媒体时长</strong><small>仅在资源时长已知时生效</small></label>
-                    <select id="setting-min-duration"><option value="0">不限制</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option></select>
+                    <label for="setting-min-duration"><strong data-i18n="minimum_duration">Minimum Media Duration</strong><small data-i18n="known_duration_only">Only applies when the resource duration is known</small></label>
+                    <select id="setting-min-duration"><option value="0" data-i18n="no_limit">No limit</option><option value="5" data-i18n="seconds_5">5 seconds</option><option value="10" data-i18n="seconds_10">10 seconds</option><option value="30" data-i18n="seconds_30">30 seconds</option><option value="60" data-i18n="seconds_60">60 seconds</option></select>
                 </div>
             </div>
-            <p class="settings-note">更改后自动保存。过滤只隐藏结果，不会阻止资源检测或删除文件。</p>
+            <p class="settings-note" data-i18n="settings_note">Changes are saved automatically. Filtering only hides results; it does not stop detection or delete files.</p>
         </section>
     </main>
     <div id="toast" role="status" aria-live="polite"></div>

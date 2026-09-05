@@ -79,7 +79,7 @@ export function parseAttributeList(line = "") {
 
 export function parseM3U8(text, playlistURL) {
     const lines = String(text).split(/\r?\n/).map(line => line.trim());
-    if (!lines.some(line => line === "#EXTM3U")) throw new Error("不是有效的 m3u8 播放列表");
+    if (!lines.some(line => line === "#EXTM3U")) throw new Error(t("invalid_m3u8"));
     const variants = [];
     const audioRenditions = [];
     const segments = [];
@@ -112,7 +112,7 @@ export function parseM3U8(text, playlistURL) {
                 audioRenditions.push({
                     type: "audio",
                     groupId: attributes["GROUP-ID"] || "",
-                    name: attributes.NAME || attributes.LANGUAGE || "音频",
+                    name: attributes.NAME || attributes.LANGUAGE || t("audio"),
                     language: attributes.LANGUAGE || "",
                     default: attributes.DEFAULT === "YES",
                     autoselect: attributes.AUTOSELECT === "YES",
@@ -260,3 +260,4 @@ export function formatDuration(seconds) {
     const rest = total % 60;
     return hours ? `${hours}:${String(minutes).padStart(2, "0")}:${String(rest).padStart(2, "0")}` : `${minutes}:${String(rest).padStart(2, "0")}`;
 }
+import { t } from "./i18n.js";

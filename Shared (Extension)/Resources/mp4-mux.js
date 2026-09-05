@@ -1,4 +1,5 @@
 import { createFile } from "./vendor/mp4box/mp4box.all.js";
+import { t } from "./i18n.js";
 
 const CONTAINER_BOXES = new Set(["moof", "traf", "mfra"]);
 
@@ -68,12 +69,12 @@ function fragmentContents(input) {
     const topLevel = boxList(bytes);
     const moof = topLevel.find(box => box.type === "moof");
     const mdat = topLevel.find(box => box.type === "mdat" && (!moof || box.offset > moof.offset));
-    if (!moof || !mdat) throw new Error("fMP4 媒体分片缺少 moof/mdat");
-    if (topLevel.filter(box => box.type === "moof").length !== 1) throw new Error("单个 HLS 分片包含多个 moof，无法安全配对");
+    if (!moof || !mdat) throw new Error(t("fmp4_missing_moof_mdat"));
+    if (topLevel.filter(box => box.type === "moof").length !== 1) throw new Error(t("multiple_moof_unsupported"));
     const children = boxList(bytes, moof.contentOffset, moof.end);
     const mfhd = children.find(box => box.type === "mfhd");
     const trafs = children.filter(box => box.type === "traf");
-    if (!mfhd || trafs.length !== 1) throw new Error("独立音视频分片必须各包含一个轨道片段");
+    if (!mfhd || trafs.length !== 1) throw new Error(t("single_track_fragment_required"));
     const prefix = topLevel.filter(box => box.offset < moof.offset && ["styp", "emsg"].includes(box.type)).map(box => bytes.slice(box.offset, box.end));
     return {
         prefix,
@@ -101,7 +102,7 @@ function patchTrackFragment(input, trackId, firstDataOffset, absoluteMoofOffset)
             view.setInt32(offsetPosition, firstDataOffset + (original - originalFirstOffset));
         }
     });
-    if (originalFirstOffset == null) throw new Error("fMP4 轨道片段缺少 trun data_offset");
+    if (originalFirstOffset == null) throw new Error(t("missing_trun_data_offset"));
     return bytes;
 }
 
@@ -143,7 +144,7 @@ function parseInitializationSegment(input) {
     buffer.fileStart = 0;
     const file = createFile();
     let error = "";
-    file.onError = (_module, message) => { error = message || "MP4 初始化分片解析失败"; };
+    file.onError = (_module, message) => { error = message || t("mp4_init_parse_failed"); };
     file.appendBuffer(buffer, true);
     file.flush();
     if (error) throw new Error(error);
@@ -152,10 +153,10 @@ function parseInitializationSegment(input) {
 
 function sourceTrack(parsed, kind) {
     const info = parsed.info.tracks.find(track => kind === "video" ? track.video : track.audio);
-    if (!info) throw new Error(`${kind === "video" ? "视频" : "音频"}初始化分片中没有可用轨道`);
+    if (!info) throw new Error(t("no_usable_track", kind === "video" ? t("video") : t("audio")));
     const trak = parsed.file.getTrackById(info.id);
     const entry = trak?.mdia?.minf?.stbl?.stsd?.entries?.[0];
-    if (!entry) throw new Error("MP4 轨道缺少解码配置");
+    if (!entry) throw new Error(t("mp4_track_missing_config"));
     return { info, trak, entry, file: parsed.file };
 }
 
@@ -169,7 +170,7 @@ export function buildCombinedInitializationSegment(videoInput, audioInput) {
     const audioTrackId = Math.max(0, ...usedTrackIds) + 1;
     const audioTrex = audioParsed.file.moov?.mvex?.trexs?.find(item => item.track_id === audio.info.id);
     const targetMoov = videoParsed.file.moov;
-    if (!targetMoov?.mvex || !audioTrex) throw new Error("音频初始化分片缺少 fragmented MP4 轨道配置");
+    if (!targetMoov?.mvex || !audioTrex) throw new Error(t("audio_init_missing_fragment_config"));
 
     audio.trak.tkhd.track_id = audioTrackId;
     audioTrex.track_id = audioTrackId;

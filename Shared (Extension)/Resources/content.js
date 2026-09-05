@@ -1,4 +1,5 @@
 (() => {
+    const t = key => browser.i18n?.getMessage(key) || key;
     const CHANNEL = "__getv_bridge_v1__";
     const pendingCommands = new Map();
     const seen = new Set();
@@ -89,9 +90,12 @@
             const requestId = crypto.randomUUID();
             const timer = setTimeout(() => {
                 pendingCommands.delete(requestId);
-                resolve({ ok: false, error: "页面播放器没有响应" });
+                resolve({ ok: false, error: t("player_not_responding") });
             }, 2500);
-            pendingCommands.set(requestId, result => { clearTimeout(timer); resolve(result); });
+            pendingCommands.set(requestId, result => {
+                clearTimeout(timer);
+                resolve(result?.errorCode ? { ...result, error: t(result.errorCode) } : result);
+            });
             window.postMessage({ channel: CHANNEL, kind: "command", command, requestId, options }, "*");
         });
     }
