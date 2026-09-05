@@ -1,11 +1,86 @@
 <!DOCTYPE html>
-<html>
+<html lang="zh-CN">
 <head>
     <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
     <link rel="stylesheet" href="popup.css">
     <script type="module" src="popup.js"></script>
 </head>
 <body>
-    <strong>Hello World!</strong>
+    <header>
+        <div class="brand"><span class="logo">V</span><div><strong>GetV</strong><small id="page-title">正在扫描页面…</small></div></div>
+        <button id="open-manager" class="icon-button" title="下载管理">↗</button>
+    </header>
+    <nav aria-label="模式">
+        <button class="tab active" data-panel="direct">直接下载</button>
+        <button class="tab" data-panel="record">录制模式</button>
+        <button class="tab" data-panel="settings">设置</button>
+    </nav>
+    <main>
+        <section id="direct" class="panel active">
+            <div class="section-heading"><span id="count">扫描中</span><button id="refresh" class="text-button">重新扫描</button></div>
+            <div id="media-list" class="media-list"></div>
+            <div id="empty" class="empty" hidden>
+                <div class="radar">⌁</div>
+                <strong id="empty-title">暂未发现媒体资源</strong>
+                <p id="empty-help">请先播放视频几秒钟，再点“重新扫描”。</p>
+            </div>
+        </section>
+        <section id="record" class="panel">
+            <div class="record-card">
+                <div class="record-icon"><span></span></div>
+                <h2 id="record-title">捕获播放器缓冲</h2>
+                <p id="record-help">开启后播放视频，GetV 会保存播放器新追加的无 DRM 媒体分片。</p>
+                <div id="record-stats" class="stats">尚未开始</div>
+                <input id="record-name" type="text" placeholder="视频文件名" maxlength="160">
+                <div class="record-actions">
+                    <button id="record-primary" class="primary">开始捕获</button>
+                    <button id="record-save" class="secondary" hidden>停止并保存</button>
+                </div>
+                <button id="record-cancel" class="danger-link" hidden>取消（可保存已捕获部分）</button>
+            </div>
+            <div class="notice">Safari 无法回读扩展注入前的 MSE 缓冲，也不能解密 FairPlay/DRM 内容。请刷新页面后尽早开始捕获。</div>
+        </section>
+        <section id="settings" class="panel">
+            <div class="settings-card">
+                <div class="setting-row">
+                    <label for="setting-threads"><strong>Download Threads</strong><small>新建 HLS 任务的分片并发数</small></label>
+                    <select id="setting-threads" aria-label="下载线程数"><option>2</option><option>4</option><option>6</option><option>8</option><option>12</option></select>
+                </div>
+                <div class="setting-row">
+                    <label for="setting-auto-save"><strong>Auto Save</strong><small>直接保存到 Safari 默认下载位置</small></label>
+                    <label class="switch"><input id="setting-auto-save" type="checkbox"><span aria-hidden="true"></span></label>
+                </div>
+                <div class="setting-row">
+                    <label for="setting-clear-cache"><strong>Clear Cache</strong><small>保存完整视频后清除扩展分片缓存</small></label>
+                    <label class="switch"><input id="setting-clear-cache" type="checkbox"><span aria-hidden="true"></span></label>
+                </div>
+                <div class="setting-row setting-row-stack">
+                    <label for="setting-file-naming"><strong>File Naming</strong><small>下载文件的默认命名来源</small></label>
+                    <select id="setting-file-naming"><option value="webpage-title">Webpage Title</option><option value="resource-filename">Resource Filename</option></select>
+                </div>
+                <div class="settings-group-title">界面</div>
+                <div class="setting-row">
+                    <label for="setting-show-badge"><strong>显示工具栏角标</strong><small>在扩展图标上显示发现的资源数</small></label>
+                    <label class="switch"><input id="setting-show-badge" type="checkbox"><span aria-hidden="true"></span></label>
+                </div>
+                <div class="settings-group-title">资源过滤</div>
+                <div class="setting-row">
+                    <label for="setting-filter-enabled"><strong>启用过滤</strong><small>隐藏短时、低分辨率的预览资源</small></label>
+                    <label class="switch"><input id="setting-filter-enabled" type="checkbox"><span aria-hidden="true"></span></label>
+                </div>
+                <div class="setting-row setting-row-stack">
+                    <label for="setting-min-height"><strong>最低视频分辨率</strong><small>仅在资源尺寸已知时生效</small></label>
+                    <select id="setting-min-height"><option value="0">不限制</option><option value="144">144p</option><option value="240">240p</option><option value="360">360p</option><option value="480">480p</option><option value="720">720p</option></select>
+                </div>
+                <div class="setting-row setting-row-stack">
+                    <label for="setting-min-duration"><strong>最短媒体时长</strong><small>仅在资源时长已知时生效</small></label>
+                    <select id="setting-min-duration"><option value="0">不限制</option><option value="5">5 秒</option><option value="10">10 秒</option><option value="30">30 秒</option><option value="60">60 秒</option></select>
+                </div>
+            </div>
+            <p class="settings-note">更改后自动保存。过滤只隐藏结果，不会阻止资源检测或删除文件。</p>
+        </section>
+    </main>
+    <div id="toast" role="status" aria-live="polite"></div>
 </body>
 </html>

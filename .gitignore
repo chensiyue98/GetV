@@ -1,0 +1,14 @@
+# Xcode user-specific state
+xcuserdata/
+*.xcuserstate
+
+# Build products
+build/
+DerivedData/
+
+# macOS
+.DS_Store
+
+# Node.js
+node_modules/
+npm-debug.log*

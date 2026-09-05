@@ -108,11 +108,21 @@
 				Resources/_locales,
 				Resources/background.js,
 				Resources/content.js,
+				Resources/core.js,
+				"Resources/download-db.js",
 				Resources/images,
+				Resources/manager.css,
+				Resources/manager.html,
+				Resources/manager.js,
+				"Resources/media-probe.js",
 				Resources/manifest.json,
+				"Resources/mp4-mux.js",
+				"Resources/page-hook.js",
 				Resources/popup.css,
 				Resources/popup.html,
 				Resources/popup.js,
+				Resources/settings.js,
+				Resources/vendor,
 				SafariWebExtensionHandler.swift,
 			);
 			target = D1B8416B304B3BAC000C9DC5 /* get-v Extension (iOS) */;
@@ -123,11 +133,21 @@
 				Resources/_locales,
 				Resources/background.js,
 				Resources/content.js,
+				Resources/core.js,
+				"Resources/download-db.js",
 				Resources/images,
+				Resources/manager.css,
+				Resources/manager.html,
+				Resources/manager.js,
+				"Resources/media-probe.js",
 				Resources/manifest.json,
+				"Resources/mp4-mux.js",
+				"Resources/page-hook.js",
 				Resources/popup.css,
 				Resources/popup.html,
 				Resources/popup.js,
+				Resources/settings.js,
+				Resources/vendor,
 				SafariWebExtensionHandler.swift,
 			);
 			target = D1B84175304B3BAC000C9DC5 /* get-v Extension (macOS) */;
@@ -153,6 +173,7 @@
 			explicitFolders = (
 				Resources/_locales,
 				Resources/images,
+				Resources/vendor,
 			);
 			path = "Shared (Extension)";
 			sourceTree = "<group>";
@@ -606,6 +627,7 @@
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -642,6 +664,7 @@
 				SDKROOT = macosx;
 				SKIP_INSTALL = YES;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_EMIT_LOC_STRINGS = YES;
 				SWIFT_UPCOMING_FEATURE_MEMBER_IMPORT_VISIBILITY = YES;
@@ -682,6 +705,7 @@
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;
@@ -723,6 +747,7 @@
 				REGISTER_APP_GROUPS = YES;
 				SDKROOT = macosx;
 				STRING_CATALOG_GENERATE_SYMBOLS = YES;
+				SUPPORTED_PLATFORMS = macosx;
 				SWIFT_APPROACHABLE_CONCURRENCY = YES;
 				SWIFT_DEFAULT_ACTOR_ISOLATION = MainActor;
 				SWIFT_EMIT_LOC_STRINGS = YES;

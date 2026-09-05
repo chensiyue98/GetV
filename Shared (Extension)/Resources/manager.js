@@ -1,0 +1,571 @@
+import { chooseAudioRendition, classifyMedia, formatBytes, formatDuration, parseContentRange, parseM3U8, safeFilename } from "./core.js";
+import { clearTaskParts, createQueuedTask, storeAll, storeDelete, storePut, taskParts } from "./download-db.js";
+import { buildCombinedInitializationSegment, mergeFragmentPair, rewriteFragmentTrackId } from "./mp4-mux.js";
+import { loadSettings, saveSettings } from "./settings.js";
+
+const active = new Map();
+const deletedTaskIds = new Set();
+let tasks = [];
+
+const taskSegments = async (taskId, track) => (await taskParts("segments", taskId)).filter(part => (part.track || "video") === track);
+const taskOutputs = async (taskId, track) => (await taskParts("outputs", taskId)).filter(part => (part.track || "video") === track);
+const DIRECT_CHUNK_SIZE = 1024 * 1024;
+
+async function saveTask(task) {
+    if (deletedTaskIds.has(task.id)) return;
+    task.updatedAt = Date.now();
+    await storePut("tasks", { ...task });
+    render();
+}
+
+async function fetchBuffer(url, signal, byteRange) {
+    const headers = {};
+    if (byteRange?.length && Number.isFinite(byteRange.offset)) headers.Range = `bytes=${byteRange.offset}-${byteRange.offset + byteRange.length - 1}`;
+    const response = await fetch(url, { credentials: "include", cache: "no-store", headers, signal });
+    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
+    return response.arrayBuffer();
+}
+
+function sequenceIV(sequence) {
+    const iv = new Uint8Array(16);
+    let number = BigInt(sequence);
+    for (let index = 15; index >= 0; index -= 1) { iv[index] = Number(number & 255n); number >>= 8n; }
+    return iv;
+}
+
+function parseIV(value, sequence) {
+    if (!value) return sequenceIV(sequence);
+    const hex = value.replace(/^0x/i, "").padStart(32, "0").slice(-32);
+    return new Uint8Array(hex.match(/.{2}/g).map(pair => parseInt(pair, 16)));
+}
+
+async function decryptSegment(buffer, keyInfo, sequence, signal, keyCache) {
+    if (!keyInfo) return buffer;
+    if (keyInfo.method !== "AES-128") throw new Error(`暂不支持加密方式 ${keyInfo.method}`);
+    if (!keyCache.has(keyInfo.url)) keyCache.set(keyInfo.url, fetchBuffer(keyInfo.url, signal).then(raw => crypto.subtle.importKey("raw", raw, "AES-CBC", false, ["decrypt"])));
+    const key = await keyCache.get(keyInfo.url);
+    return crypto.subtle.decrypt({ name: "AES-CBC", iv: parseIV(keyInfo.iv, sequence) }, key, buffer);
+}
+
+async function fetchPlaylist(url, signal, description) {
+    let response = await fetch(url, { credentials: "include", cache: "no-store", signal });
+    if (!response.ok) throw new Error(`${description}请求失败 (${response.status})`);
+    let parsed = parseM3U8(await response.text(), response.url || url);
+    return { ...parsed, resolvedURL: url };
+}
+
+async function loadPlaylists(task, signal) {
+    let master = await fetchPlaylist(task.url, signal, "视频播放列表");
+    if (master.variants.length) {
+        const variant = master.variants[0];
+        if (!task.audioURL) {
+            const rendition = chooseAudioRendition(master, variant);
+            task.audioURL = rendition?.url || null;
+            task.audioName = rendition?.name || "";
+            task.audioLanguage = rendition?.language || "";
+        }
+        task.url = variant.url;
+        master = await fetchPlaylist(variant.url, signal, "清晰度播放列表");
+    } else if (!task.audioURL && task.sourceURL && task.sourceURL !== task.url) {
+        const sourceMaster = await fetchPlaylist(task.sourceURL, signal, "主播放列表");
+        const groups = [...new Set(sourceMaster.variants.map(variant => variant.audioGroup).filter(Boolean))];
+        const selectedVariant = sourceMaster.variants.find(variant => variant.url === task.url) || (groups.length === 1 ? { audioGroup: groups[0] } : null);
+        const rendition = chooseAudioRendition(sourceMaster, selectedVariant);
+        task.audioURL = rendition?.url || null;
+        task.audioName = rendition?.name || "";
+        task.audioLanguage = rendition?.language || "";
+    }
+    task.audioDiscoveryDone = true;
+    if (!master.segments.length) throw new Error("视频播放列表中没有媒体分片");
+
+    let audio = null;
+    if (task.audioURL) {
+        audio = await fetchPlaylist(task.audioURL, signal, "音频播放列表");
+        if (audio.variants.length) audio = await fetchPlaylist(audio.variants[0].url, signal, "音频媒体播放列表");
+        if (!audio.segments.length) throw new Error("音频播放列表中没有媒体分片");
+    }
+    return { video: master, audio };
+}
+
+async function runDirectTask(task) {
+    if (active.has(task.id)) return;
+    const controller = new AbortController();
+    active.set(task.id, controller);
+    task.state = "running";
+    task.error = "";
+    task.cacheCleared = false;
+    task.startedAt ||= Date.now();
+    await saveTask(task);
+    try {
+        let existing = await taskSegments(task.id, "direct");
+        let offset = existing.reduce((sum, part) => sum + part.size, 0);
+        task.bytes = offset;
+        task.completedSegments = existing.length;
+        if (offset && task.totalBytes && offset >= task.totalBytes) {
+            await assembleDirect(task, false);
+            return;
+        }
+
+        const headers = offset ? { Range: `bytes=${offset}-` } : {};
+        const response = await fetch(task.url, {
+            credentials: "include",
+            cache: "no-store",
+            headers,
+            referrer: task.pageURL || "",
+            referrerPolicy: "strict-origin-when-cross-origin",
+            signal: controller.signal
+        });
+        if (!response.ok) throw new Error(`文件请求失败 (${response.status})`);
+
+        const range = parseContentRange(response.headers.get("content-range") || "");
+        if (offset && (response.status !== 206 || (range && range.start !== offset))) {
+            await clearTaskParts("segments", task.id);
+            existing = [];
+            offset = 0;
+            task.bytes = 0;
+            task.completedSegments = 0;
+            if (response.status === 206 && range?.start) throw new Error("服务器返回了不匹配的续传范围，请重新下载");
+        }
+
+        task.mime = response.headers.get("content-type") || task.mime || "application/octet-stream";
+        const detectedType = classifyMedia(response.url || task.url, task.mime);
+        if (detectedType !== "unknown") {
+            task.mediaType = detectedType;
+            task.filename = safeFilename(task.filename, detectedType);
+        }
+        const contentLength = Number(response.headers.get("content-length")) || 0;
+        task.totalBytes = range?.total || (contentLength ? offset + contentLength : task.totalBytes || 0);
+        task.finalURL = response.url || task.url;
+        task.resumable = response.status === 206 || /bytes/i.test(response.headers.get("accept-ranges") || "");
+
+        let chunkIndex = existing.length;
+        let pending = [];
+        let pendingBytes = 0;
+        let tickBytes = task.bytes;
+        let tickTime = performance.now();
+        const flush = async () => {
+            if (!pendingBytes || deletedTaskIds.has(task.id)) return;
+            const blob = new Blob(pending, { type: task.mime });
+            await storePut("segments", { id: `${task.id}:direct:${chunkIndex}`, taskId: task.id, track: "direct", index: chunkIndex, blob, size: blob.size });
+            chunkIndex += 1;
+            task.completedSegments = chunkIndex;
+            pending = [];
+            pendingBytes = 0;
+        };
+        const acceptChunk = async value => {
+            if (!value?.byteLength) return;
+            pending.push(value);
+            pendingBytes += value.byteLength;
+            task.bytes += value.byteLength;
+            if (pendingBytes >= DIRECT_CHUNK_SIZE) await flush();
+            const now = performance.now();
+            if (now - tickTime > 500) {
+                task.speed = ((task.bytes - tickBytes) * 1000) / (now - tickTime);
+                tickBytes = task.bytes;
+                tickTime = now;
+                await saveTask(task);
+            } else render();
+        };
+
+        try {
+            if (response.body?.getReader) {
+                const reader = response.body.getReader();
+                while (task.state === "running") {
+                    const { done, value } = await reader.read();
+                    if (done) break;
+                    await acceptChunk(value);
+                }
+                if (task.state !== "running") await reader.cancel().catch(() => {});
+            } else {
+                await acceptChunk(new Uint8Array(await response.arrayBuffer()));
+            }
+        } finally {
+            await flush();
+        }
+
+        if (task.state === "running") {
+            if (task.totalBytes && task.bytes < task.totalBytes) throw new Error(`连接提前结束（${formatBytes(task.bytes)} / ${formatBytes(task.totalBytes)}）`);
+            await assembleDirect(task, false);
+        }
+    } catch (error) {
+        if (error.name !== "AbortError") {
+            task.state = "error";
+            task.error = error.message;
+            await saveTask(task);
+        }
+    } finally {
+        active.delete(task.id);
+        task.speed = 0;
+        await saveTask(task);
+    }
+}
+
+async function runTask(task) {
+    if (task.kind === "direct") return runDirectTask(task);
+    if (active.has(task.id)) return;
+    const controller = new AbortController();
+    active.set(task.id, controller);
+    task.state = "running";
+    task.error = "";
+    task.cacheCleared = false;
+    task.startedAt ||= Date.now();
+    let tickBytes = task.bytes || 0;
+    let tickTime = performance.now();
+    await saveTask(task);
+    try {
+        const playlists = await loadPlaylists(task, controller.signal);
+        const tracks = [{ track: "video", playlist: playlists.video }];
+        if (playlists.audio) tracks.push({ track: "audio", playlist: playlists.audio });
+        task.totalSegments = tracks.reduce((sum, item) => sum + item.playlist.segments.length + (item.playlist.map ? 1 : 0), 0);
+        task.duration = playlists.video.duration;
+        task.container = playlists.video.map ? "fmp4" : "mpegts";
+        task.videoContainer = task.container;
+        task.audioContainer = playlists.audio ? (playlists.audio.map ? "fmp4" : "mpegts") : null;
+        task.liveSnapshot = tracks.some(item => !item.playlist.endList);
+        const existing = await taskParts("segments", task.id);
+        const completed = new Set(existing.map(item => `${item.track || "video"}:${item.index}`));
+        task.completedSegments = completed.size;
+        task.bytes = existing.reduce((sum, item) => sum + item.size, 0);
+        tickBytes = task.bytes;
+        tickTime = performance.now();
+        const queue = [];
+        for (const { track, playlist } of tracks) {
+            if (playlist.map && !completed.has(`${track}:-1`)) queue.push({ track, index: -1, sequence: 0, timeline: -1, url: playlist.map.url, byteRange: playlist.map.byteRange, key: playlist.map.key || null });
+            queue.push(...playlist.segments.filter(segment => !completed.has(`${track}:${segment.index}`)).map(segment => ({ ...segment, track, timeline: segment.startTime })));
+        }
+        const keyCache = new Map();
+        let cursor = 0;
+        const worker = async () => {
+            while (cursor < queue.length && task.state === "running") {
+                const segment = queue[cursor++];
+                let data = await fetchBuffer(segment.url, controller.signal, segment.byteRange);
+                data = await decryptSegment(data, segment.key, segment.sequence, controller.signal, keyCache);
+                if (deletedTaskIds.has(task.id)) throw new DOMException("任务已删除", "AbortError");
+                await storePut("segments", { id: `${task.id}:${segment.track}:${segment.index}`, taskId: task.id, track: segment.track, index: segment.index, timeline: segment.timeline, duration: segment.duration || 0, blob: new Blob([data]), size: data.byteLength });
+                task.completedSegments += 1;
+                task.bytes += data.byteLength;
+                const now = performance.now();
+                if (now - tickTime > 500) {
+                    task.speed = ((task.bytes - tickBytes) * 1000) / (now - tickTime);
+                    tickBytes = task.bytes; tickTime = now;
+                    await saveTask(task);
+                } else render();
+            }
+        };
+        const concurrency = Math.max(1, Math.min(12, Number(task.concurrency || document.querySelector("#global-concurrency").value || 6)));
+        await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, worker));
+        if (task.state === "running") await assemble(task, false);
+    } catch (error) {
+        if (error.name !== "AbortError") { task.state = "error"; task.error = error.message; await saveTask(task); }
+    } finally {
+        active.delete(task.id);
+        task.speed = 0;
+        await saveTask(task);
+    }
+}
+
+async function assemble(task, partial) {
+    if (task.kind === "direct") return assembleDirect(task, partial);
+    if (deletedTaskIds.has(task.id)) return;
+    const videoSource = await taskSegments(task.id, "video");
+    const audioSource = task.audioURL ? await taskSegments(task.id, "audio") : [];
+    if (!videoSource.length) throw new Error("没有已下载的视频分片");
+    if (task.audioURL && !audioSource.length) throw new Error("音频分片尚未下载，不能导出无声文件");
+    task.state = "assembling";
+    await saveTask(task);
+    await clearTaskParts("outputs", task.id);
+    let parts = videoSource;
+    let outputContainer = task.videoContainer || task.container;
+
+    if (task.audioURL) {
+        const videoParts = outputContainer === "mpegts" ? await transmuxTrackToMP4(task, "video", videoSource) : videoSource;
+        const audioContainer = task.audioContainer || (audioSource.some(part => part.index < 0) ? "fmp4" : "mpegts");
+        const audioParts = audioContainer === "mpegts" ? await transmuxTrackToMP4(task, "audio", audioSource) : audioSource;
+        parts = await combineSeparateTracks(videoParts, audioParts);
+        outputContainer = "fmp4";
+        task.outputWarning = "";
+    } else if (outputContainer === "mpegts") {
+        try {
+            parts = await transmuxTrackToMP4(task, "video", videoSource);
+            outputContainer = "fmp4";
+            task.outputWarning = "";
+        } catch (error) {
+            parts = videoSource;
+            task.outputWarning = `TS 转 MP4 失败，已保留原始 TS：${error.message}`;
+        }
+    }
+    const extension = outputContainer === "fmp4" ? "mp4" : "ts";
+    const mime = outputContainer === "fmp4" ? "video/mp4" : "video/mp2t";
+    task.outputContainer = outputContainer;
+    const blob = new Blob(parts.map(part => part.blob), { type: mime });
+    const url = URL.createObjectURL(blob);
+    const filename = safeFilename(partial ? task.filename.replace(/\.[^.]+$/, "") + "-partial" : task.filename, extension);
+    const settings = await loadSettings();
+    try {
+        if (deletedTaskIds.has(task.id)) return;
+        if (browser.downloads?.download) await browser.downloads.download({ url, filename, saveAs: !settings.autoSave });
+        else {
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = filename;
+            anchor.click();
+        }
+        if (!partial) {
+            task.state = "complete";
+            task.completedAt = Date.now();
+            if (settings.clearCacheAfterSave) {
+                try {
+                    await clearTaskParts("outputs", task.id);
+                    await clearTaskParts("segments", task.id);
+                    task.cacheCleared = true;
+                } catch (error) {
+                    task.outputWarning = `视频已保存，但缓存清理失败：${error.message}`;
+                }
+            }
+        }
+    } finally { setTimeout(() => URL.revokeObjectURL(url), 60_000); }
+    await saveTask(task);
+}
+
+async function assembleDirect(task, partial) {
+    if (deletedTaskIds.has(task.id)) return;
+    const parts = await taskSegments(task.id, "direct");
+    if (!parts.length) throw new Error("没有已下载的文件数据");
+    task.state = "assembling";
+    await saveTask(task);
+    const extension = task.mediaType && task.mediaType !== "unknown" ? task.mediaType : "";
+    const baseName = partial ? task.filename.replace(/(\.[^.]+)?$/, "-partial$1") : task.filename;
+    const filename = safeFilename(baseName, extension);
+    const blob = new Blob(parts.map(part => part.blob), { type: task.mime || "application/octet-stream" });
+    const url = URL.createObjectURL(blob);
+    const settings = await loadSettings();
+    try {
+        if (deletedTaskIds.has(task.id)) return;
+        if (browser.downloads?.download) await browser.downloads.download({ url, filename, saveAs: !settings.autoSave });
+        else {
+            const anchor = document.createElement("a");
+            anchor.href = url;
+            anchor.download = filename;
+            anchor.click();
+        }
+        if (!partial) {
+            task.state = "complete";
+            task.completedAt = Date.now();
+            if (settings.clearCacheAfterSave) {
+                try {
+                    await clearTaskParts("segments", task.id);
+                    task.cacheCleared = true;
+                } catch (error) {
+                    task.outputWarning = `文件已保存，但缓存清理失败：${error.message}`;
+                }
+            }
+        }
+    } finally {
+        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+    }
+    await saveTask(task);
+}
+
+async function transmuxTrackToMP4(task, track, sourceParts) {
+    const Transmuxer = globalThis.muxjs?.mp4?.Transmuxer || globalThis.muxjs?.Transmuxer;
+    if (!Transmuxer) throw new Error("转封装组件未加载");
+    const transmuxer = new Transmuxer({ keepOriginalTimestamps: true, remux: true });
+    let currentPart = null;
+    let outputIndex = 0;
+    let initWritten = false;
+    let writes = [];
+    transmuxer.on("data", segment => {
+        if (deletedTaskIds.has(task.id)) return;
+        if (!initWritten && segment.initSegment?.byteLength) {
+            initWritten = true;
+            writes.push(storePut("outputs", { id: `${task.id}:${track}:init`, taskId: task.id, track, index: -1, timeline: -1, blob: new Blob([segment.initSegment]), size: segment.initSegment.byteLength }));
+        }
+        if (segment.data?.byteLength) {
+            const index = currentPart.index * 100 + outputIndex++;
+            writes.push(storePut("outputs", { id: `${task.id}:${track}:${index}`, taskId: task.id, track, index, timeline: currentPart.timeline ?? currentPart.index, duration: currentPart.duration || 0, blob: new Blob([segment.data]), size: segment.data.byteLength }));
+        }
+    });
+    const mediaParts = sourceParts.filter(part => part.index >= 0);
+    for (let index = 0; index < mediaParts.length; index += 1) {
+        if (deletedTaskIds.has(task.id)) throw new DOMException("任务已删除", "AbortError");
+        currentPart = mediaParts[index];
+        outputIndex = 0;
+        transmuxer.push(new Uint8Array(await mediaParts[index].blob.arrayBuffer()));
+        transmuxer.flush();
+        await Promise.all(writes);
+        writes = [];
+        task.transmuxProgress = `${track === "video" ? "视频" : "音频"} ${index + 1}/${mediaParts.length}`;
+        if (index % 5 === 0) render();
+    }
+    const outputs = await taskOutputs(task.id, track);
+    if (!initWritten || outputs.length < 2) throw new Error("流不是受支持的 H.264/AAC MPEG-TS");
+    return outputs;
+}
+
+async function combineSeparateTracks(videoParts, audioParts) {
+    const videoInit = videoParts.find(part => part.index < 0);
+    const audioInit = audioParts.find(part => part.index < 0);
+    if (!videoInit || !audioInit) throw new Error("独立音视频流缺少 fMP4 初始化分片，无法合并");
+    const combined = buildCombinedInitializationSegment(
+        new Uint8Array(await videoInit.blob.arrayBuffer()),
+        new Uint8Array(await audioInit.blob.arrayBuffer())
+    );
+    const videoMedia = videoParts.filter(part => part.index >= 0).sort((a, b) => (a.timeline ?? a.index) - (b.timeline ?? b.index));
+    const audioMedia = audioParts.filter(part => part.index >= 0).sort((a, b) => (a.timeline ?? a.index) - (b.timeline ?? b.index));
+    if (!videoMedia.length || !audioMedia.length) throw new Error("独立音视频流尚无足够的已下载媒体分片");
+
+    const output = [new Blob([combined.init])];
+    let destinationOffset = combined.init.byteLength;
+    let sequenceNumber = 1;
+    const pairCount = Math.max(videoMedia.length, audioMedia.length);
+    for (let index = 0; index < pairCount; index += 1) {
+        const videoPart = videoMedia[index];
+        const audioPart = audioMedia[index];
+        let rewritten;
+        if (videoPart && audioPart) {
+            rewritten = mergeFragmentPair(await videoPart.blob.arrayBuffer(), await audioPart.blob.arrayBuffer(), {
+                videoTrackId: combined.videoTrackId,
+                audioTrackId: combined.audioTrackId,
+                destinationOffset,
+                sequenceNumber: sequenceNumber++
+            });
+        } else {
+            const part = videoPart || audioPart;
+            const trackId = videoPart ? combined.videoTrackId : combined.audioTrackId;
+            rewritten = rewriteFragmentTrackId(await part.blob.arrayBuffer(), trackId, destinationOffset, sequenceNumber++);
+        }
+        const blob = new Blob([rewritten]);
+        output.push(blob);
+        destinationOffset += blob.size;
+    }
+    return output.map((blob, index) => ({ blob, index }));
+}
+
+function pauseTask(task) {
+    task.state = "paused";
+    active.get(task.id)?.abort();
+    saveTask(task);
+}
+
+async function deleteTask(task) {
+    if (!confirm(`确定从列表删除“${task.filename}”吗？\n只会移除任务并清理扩展临时缓存；已保存到磁盘的 MP4/TS 不会删除。`)) return;
+    deletedTaskIds.add(task.id);
+    active.get(task.id)?.abort();
+    try {
+        await clearTaskParts("segments", task.id);
+        await clearTaskParts("outputs", task.id);
+        await storeDelete("tasks", task.id);
+        tasks = tasks.filter(item => item.id !== task.id);
+        render();
+    } catch (error) {
+        deletedTaskIds.delete(task.id);
+        alert(`任务删除失败：${error.message}`);
+    }
+}
+
+async function clearAllTasks() {
+    if (!tasks.length) return;
+    const snapshot = [...tasks];
+    if (!confirm(`确定清空全部 ${snapshot.length} 个任务吗？\n只会清空列表并清理扩展临时缓存；已保存到磁盘的 MP4/TS 不会删除。`)) return;
+    for (const task of snapshot) {
+        deletedTaskIds.add(task.id);
+        active.get(task.id)?.abort();
+    }
+    const results = await Promise.allSettled(snapshot.map(async task => {
+        await clearTaskParts("segments", task.id);
+        await clearTaskParts("outputs", task.id);
+        await storeDelete("tasks", task.id);
+        return task.id;
+    }));
+    const removedIds = new Set(results.flatMap(result => result.status === "fulfilled" ? [result.value] : []));
+    tasks = tasks.filter(task => !removedIds.has(task.id));
+    for (const task of tasks) deletedTaskIds.delete(task.id);
+    render();
+    const failed = results.filter(result => result.status === "rejected");
+    if (failed.length) alert(`${failed.length} 个任务清理失败，已保留在列表中。\n${failed[0].reason?.message || failed[0].reason}`);
+}
+
+function statusText(task) {
+    return ({ queued:"等待中", running:"下载中", paused:"已暂停", assembling:"正在合并", complete:"已完成", cancelled:"已取消", error:"出错" })[task.state] || task.state;
+}
+
+function render() {
+    const list = document.querySelector("#task-list");
+    list.replaceChildren();
+    document.querySelector("#empty").hidden = Boolean(tasks.length);
+    for (const task of [...tasks].sort((a, b) => b.createdAt - a.createdAt)) {
+        const node = document.querySelector("#task-template").content.firstElementChild.cloneNode(true);
+        node.dataset.state = task.state;
+        const isDirect = task.kind === "direct";
+        node.querySelector(".task-icon").textContent = isDirect ? (task.mediaType && task.mediaType !== "unknown" ? task.mediaType : task.mediaKind || "FILE") : "HLS";
+        node.querySelector("h2").textContent = task.filename;
+        const directDetails = [task.width && task.height ? `${task.width}×${task.height}` : "", task.duration ? formatDuration(task.duration) : "", task.resumable ? "支持续传" : ""].filter(Boolean).join(" · ");
+        node.querySelector(".quality").textContent = isDirect
+            ? `${directDetails || "直链媒体"}${task.outputWarning ? ` · ${task.outputWarning}` : ""}`
+            : `${task.quality || "自动最高画质"}${task.audioName ? ` · 音频 ${task.audioName}${task.audioLanguage ? ` (${task.audioLanguage})` : ""}` : ""}${task.duration ? ` · ${formatDuration(task.duration)}` : ""}${task.liveSnapshot ? " · 直播快照" : ""}${task.outputWarning ? ` · ${task.outputWarning}` : ""}`;
+        node.querySelector(".status").textContent = statusText(task);
+        const percent = isDirect
+            ? task.totalBytes ? Math.min(100, Math.round((task.bytes || 0) / task.totalBytes * 100)) : 0
+            : task.totalSegments ? Math.round((task.completedSegments || 0) / task.totalSegments * 100) : 0;
+        node.querySelector(".progress span").style.width = `${percent}%`;
+        node.querySelector(".numbers").textContent = isDirect
+            ? task.cacheCleared ? "缓存已清理" : `${formatBytes(task.bytes)} / ${task.totalBytes ? formatBytes(task.totalBytes) : "大小未知"}`
+            : `${task.completedSegments || 0} / ${task.totalSegments || "?"} 分片 · ${task.cacheCleared ? "缓存已清理" : formatBytes(task.bytes)}${task.transmuxProgress && task.state === "assembling" ? ` · 转封装 ${task.transmuxProgress}` : ""}`;
+        node.querySelector(".speed").textContent = task.speed ? `${formatBytes(task.speed)}/s` : `${percent}%`;
+        node.querySelector(".error").textContent = task.error || "";
+        const toggle = node.querySelector('[data-action="toggle"]');
+        const needsAudioCheck = !isDirect && task.state === "complete" && task.sourceURL && !task.audioDiscoveryDone;
+        toggle.textContent = task.state === "running" ? "暂停" : needsAudioCheck ? "检测并补齐音轨" : task.state === "complete" && task.cacheCleared ? "重新下载" : task.state === "complete" ? "重新导出" : "继续";
+        toggle.addEventListener("click", () => task.state === "running" ? pauseTask(task) : needsAudioCheck || (task.state === "complete" && task.cacheCleared) ? runTask(task) : task.state === "complete" ? assemble(task, false) : runTask(task));
+        node.querySelector('[data-action="partial"]').addEventListener("click", () => assemble(task, true).catch(error => alert(error.message)));
+        node.querySelector('[data-action="rename"]').addEventListener("click", async () => {
+            const value = prompt("新的文件名", task.filename);
+            const extension = isDirect
+                ? (task.mediaType !== "unknown" ? task.mediaType : "")
+                : ((task.outputContainer || task.container) === "mpegts" && !task.audioURL ? "ts" : "mp4");
+            if (value) { task.filename = safeFilename(value, extension); await saveTask(task); }
+        });
+        node.querySelector('[data-action="delete"]').addEventListener("click", () => deleteTask(task));
+        list.appendChild(node);
+    }
+    document.querySelector("#running-count").textContent = tasks.filter(task => ["running", "assembling"].includes(task.state)).length;
+    document.querySelector("#complete-count").textContent = tasks.filter(task => task.state === "complete").length;
+    document.querySelector("#cached-size").textContent = formatBytes(tasks.reduce((sum, task) => sum + (task.cacheCleared ? 0 : task.bytes || 0), 0));
+}
+
+async function migrateLegacyPendingJobs() {
+    try {
+        const stored = await browser.storage.local.get("pendingHLSJobs");
+        const pending = stored.pendingHLSJobs || [];
+        const ids = new Set(tasks.map(task => task.id));
+        for (const job of pending) if (!ids.has(job.id)) {
+            const task = createQueuedTask(job, job.id, job.createdAt);
+            tasks.push(task);
+            await storePut("tasks", task);
+        }
+        await browser.storage.local.remove("pendingHLSJobs");
+    } catch (error) {
+        console.warn("GetV could not migrate the legacy task queue:", error);
+    }
+}
+
+async function start() {
+    navigator.storage?.persist?.().catch(() => false);
+    const settings = await loadSettings();
+    document.querySelector("#global-concurrency").value = String(settings.downloadThreads);
+    tasks = await storeAll("tasks");
+    for (const task of tasks) if (["running", "assembling"].includes(task.state)) task.state = "paused";
+    await migrateLegacyPendingJobs();
+    render();
+    const requested = location.hash.slice(1);
+    const queued = requested ? tasks.find(task => task.id === requested) : tasks.find(task => task.state === "queued");
+    if (queued) runTask(queued);
+    document.querySelector("#resume-all").addEventListener("click", () => tasks.filter(task => ["paused", "queued", "error"].includes(task.state)).forEach(runTask));
+    document.querySelector("#clear-all").addEventListener("click", () => clearAllTasks().catch(error => alert(`清空失败：${error.message}`)));
+    document.querySelector("#global-concurrency").addEventListener("change", async event => {
+        await saveSettings({ downloadThreads: Number(event.target.value) });
+        tasks.forEach(task => { if (task.state !== "running") task.concurrency = Number(event.target.value); });
+    });
+}
+
+start().catch(error => alert(`下载管理器初始化失败：${error.message}`));

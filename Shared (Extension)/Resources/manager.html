@@ -1,0 +1,42 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>GetV 下载管理</title>
+    <link rel="stylesheet" href="manager.css">
+    <script src="vendor/mux.js/mux-mp4.min.js"></script>
+    <script type="module" src="manager.js"></script>
+</head>
+<body>
+    <header>
+        <div class="brand"><span>V</span><div><h1>下载管理</h1><p>关闭此页面会暂停分片调度；已完成分片不会丢失</p></div></div>
+        <div class="header-actions">
+            <button id="clear-all" class="danger">清空列表</button>
+            <button id="resume-all">继续全部</button>
+        </div>
+    </header>
+    <main>
+        <section class="summary">
+            <div><small>进行中</small><strong id="running-count">0</strong></div>
+            <div><small>已完成</small><strong id="complete-count">0</strong></div>
+            <div><small>本地缓存</small><strong id="cached-size">0 B</strong></div>
+            <label>并发数<select id="global-concurrency"><option>2</option><option>4</option><option selected>6</option><option>8</option><option>12</option></select></label>
+        </section>
+        <section id="task-list" class="task-list"></section>
+        <section id="empty" class="empty" hidden><div>↓</div><h2>还没有下载任务</h2><p>在 Safari 工具栏打开 GetV，选择一个媒体资源开始下载。</p></section>
+    </main>
+    <template id="task-template">
+        <article class="task">
+            <div class="task-icon">HLS</div>
+            <div class="task-body">
+                <div class="task-heading"><div><h2></h2><p class="quality"></p></div><span class="status"></span></div>
+                <div class="progress"><span></span></div>
+                <div class="task-meta"><span class="numbers"></span><span class="speed"></span></div>
+                <div class="task-actions"><button data-action="toggle" class="primary"></button><button data-action="partial">保存已有部分</button><button data-action="rename">重命名</button><button data-action="delete" class="danger">删除任务</button></div>
+                <p class="error"></p>
+            </div>
+        </article>
+    </template>
+</body>
+</html>

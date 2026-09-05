@@ -1,0 +1,10 @@
+{
+  "name": "get-v-safari-extension",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "test": "node --test tests/*.test.js",
+    "check": "node --check 'Shared (Extension)/Resources/background.js' && node --check 'Shared (Extension)/Resources/content.js' && node --check 'Shared (Extension)/Resources/download-db.js' && node --check 'Shared (Extension)/Resources/media-probe.js' && node --check 'Shared (Extension)/Resources/mp4-mux.js' && node --check 'Shared (Extension)/Resources/page-hook.js' && node --check 'Shared (Extension)/Resources/popup.js' && node --check 'Shared (Extension)/Resources/manager.js' && node --check 'Shared (Extension)/Resources/settings.js'",
+    "check:macos-scheme": "./scripts/check-macos-scheme.sh"
+  }
+}
