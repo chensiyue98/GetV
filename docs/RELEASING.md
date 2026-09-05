@@ -32,10 +32,10 @@ base64 < AuthKey_XXXXXXXXXX.p8 | pbcopy
 
 ## 发布
 
-当前项目的 `MARKETING_VERSION` 是 `1.0`。首次发布可使用以下任一方式：
+当前项目的 `MARKETING_VERSION` 是 `1.1`。发布可使用以下任一方式：
 
-- 在 GitHub 的 **Actions → Release → Run workflow** 中输入 `1.0`。
-- 推送与项目版本一致的标签：`git tag v1.0 && git push origin v1.0`。
+- 在 GitHub 的 **Actions → Release → Run workflow** 中输入 `1.1`。
+- 推送与项目版本一致的标签：`git tag v1.1 && git push origin v1.1`。
 
 工作流会拒绝与 `MARKETING_VERSION` 不一致的版本，避免 Release、App 和 Homebrew Cask 版本漂移。发布完成后，用户可运行：
 
