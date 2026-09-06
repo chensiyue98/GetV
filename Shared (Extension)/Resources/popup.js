@@ -187,7 +187,6 @@ async function initializeSettings() {
     settings = await loadSettings();
     $("#setting-threads").value = String(settings.downloadThreads);
     $("#setting-auto-save").checked = settings.autoSave;
-    $("#setting-clear-cache").checked = settings.clearCacheAfterSave;
     $("#setting-file-naming").value = settings.fileNaming;
     $("#setting-show-badge").checked = settings.showBadge;
     $("#setting-filter-enabled").checked = settings.filterEnabled;
@@ -203,7 +202,6 @@ async function initializeSettings() {
         settings = await saveSettings({
             downloadThreads: Number($("#setting-threads").value),
             autoSave: $("#setting-auto-save").checked,
-            clearCacheAfterSave: $("#setting-clear-cache").checked,
             fileNaming: $("#setting-file-naming").value,
             showBadge: $("#setting-show-badge").checked,
             filterEnabled: $("#setting-filter-enabled").checked,
@@ -213,7 +211,7 @@ async function initializeSettings() {
         toast(t("settings_saved"));
     };
     const filterControls = new Set(["#setting-filter-enabled", "#setting-min-height", "#setting-min-duration"]);
-    for (const id of ["#setting-threads", "#setting-auto-save", "#setting-clear-cache", "#setting-file-naming", "#setting-show-badge", ...filterControls]) {
+    for (const id of ["#setting-threads", "#setting-auto-save", "#setting-file-naming", "#setting-show-badge", ...filterControls]) {
         $(id).addEventListener("change", () => {
             if (id === "#setting-filter-enabled") syncFilterControls();
             persist()

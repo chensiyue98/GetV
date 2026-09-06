@@ -123,6 +123,7 @@
 				Resources/popup.html,
 				Resources/popup.js,
 				Resources/settings.js,
+				"Resources/save-download.js",
 				Resources/vendor,
 				SafariWebExtensionHandler.swift,
 			);
@@ -149,6 +150,7 @@
 				Resources/popup.html,
 				Resources/popup.js,
 				Resources/settings.js,
+				"Resources/save-download.js",
 				Resources/vendor,
 				SafariWebExtensionHandler.swift,
 			);

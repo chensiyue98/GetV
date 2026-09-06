@@ -5,7 +5,7 @@ button, select { font:inherit; }
 button { cursor:pointer; }
 header { height:84px; padding:0 max(28px, calc((100vw - 980px)/2)); display:flex; align-items:center; justify-content:space-between; background:#fff; border-bottom:1px solid var(--line); }
 .brand { display:flex; align-items:center; gap:13px; }
-.brand > span { width:44px; height:44px; display:grid; place-items:center; border-radius:13px; color:white; background:linear-gradient(145deg,#817aff,#4a42df); font-size:21px; font-weight:800; box-shadow:0 8px 22px #635bff3c; }
+.brand-logo { width:44px; height:44px; flex:0 0 auto; display:block; object-fit:contain; border-radius:13px; }
 h1 { font-size:19px; margin:0; }
 .brand p { color:var(--muted); margin:4px 0 0; font-size:12px; }
 header button,.primary { border:0; border-radius:10px; background:var(--accent); color:#fff; padding:9px 15px; font-weight:650; }
@@ -44,3 +44,10 @@ main { max-width:980px; margin:24px auto; padding:0 20px; }
 .empty p { margin:0; }
 @media(max-width:700px){ .summary{grid-template-columns:1fr 1fr}.task{border-radius:0;border-left:0;border-right:0}.task-actions{flex-wrap:wrap}.summary>label{display:none}header{padding:0 18px}.brand p{display:none}.header-actions button{padding:8px 10px;font-size:12px}main{padding:0;margin:14px 0}.task-list{gap:8px} }
 @media(prefers-color-scheme:dark){ :root{color-scheme:dark;--ink:#f1f0f7;--muted:#a09eae;--line:#3a3943}body{background:#1c1b21}header,.summary>div,.summary label,.task{background:#26252c}.task-actions button{background:#302f37;color:#ddd}.summary{background:var(--line)} }
+
+.export-cleanup { width:min(440px, calc(100vw - 32px)); border:1px solid var(--line); border-radius:16px; padding:24px; background:Canvas; color:var(--ink); box-shadow:0 16px 64px #0003; }
+.export-cleanup::backdrop { background:#0006; }
+.export-cleanup h2 { font-size:18px; margin:0 0 12px; }
+.export-cleanup p { line-height:1.6; overflow-wrap:anywhere; }
+.export-cleanup > div { display:flex; justify-content:flex-end; flex-wrap:wrap; gap:10px; margin-top:20px; }
+.export-cleanup button { padding:9px 12px; border:1px solid var(--line); border-radius:8px; }

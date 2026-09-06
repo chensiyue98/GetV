@@ -1,3 +1,4 @@
+import { saveDownload } from "./save-download.js";
 import { chooseAudioRendition, classifyMedia, formatBytes, formatDuration, parseContentRange, parseM3U8, safeFilename } from "./core.js";
 import { clearTaskParts, createQueuedTask, storeAll, storeDelete, storePut, taskParts } from "./download-db.js";
 import { buildCombinedInitializationSegment, mergeFragmentPair, rewriteFragmentTrackId } from "./mp4-mux.js";
@@ -103,7 +104,7 @@ async function runDirectTask(task) {
         task.bytes = offset;
         task.completedSegments = existing.length;
         if (offset && task.totalBytes && offset >= task.totalBytes) {
-            await assembleDirect(task, false);
+            await finishDownload(task);
             return;
         }
 
@@ -186,7 +187,7 @@ async function runDirectTask(task) {
 
         if (task.state === "running") {
             if (task.totalBytes && task.bytes < task.totalBytes) throw new Error(t("connection_ended_early", [formatBytes(task.bytes), formatBytes(task.totalBytes)]));
-            await assembleDirect(task, false);
+            await finishDownload(task);
         }
     } catch (error) {
         if (error.name !== "AbortError") {
@@ -255,7 +256,7 @@ async function runTask(task) {
         };
         const concurrency = Math.max(1, Math.min(12, Number(task.concurrency || document.querySelector("#global-concurrency").value || 6)));
         await Promise.all(Array.from({ length: Math.min(concurrency, queue.length || 1) }, worker));
-        if (task.state === "running") await assemble(task, false);
+        if (task.state === "running") await finishDownload(task);
     } catch (error) {
         if (error.name !== "AbortError") { task.state = "error"; task.error = error.message; await saveTask(task); }
     } finally {
@@ -272,6 +273,8 @@ async function assemble(task, partial) {
     const audioSource = task.audioURL ? await taskSegments(task.id, "audio") : [];
     if (!videoSource.length) throw new Error(t("no_downloaded_video_segments"));
     if (task.audioURL && !audioSource.length) throw new Error(t("audio_segments_missing"));
+    const previousState = task.state;
+    task.error = "";
     task.state = "assembling";
     await saveTask(task);
     await clearTaskParts("outputs", task.id);
@@ -302,29 +305,27 @@ async function assemble(task, partial) {
     const url = URL.createObjectURL(blob);
     const filename = safeFilename(partial ? task.filename.replace(/\.[^.]+$/, "") + "-partial" : task.filename, extension);
     const settings = await loadSettings();
+    let retainURL = false;
     try {
         if (deletedTaskIds.has(task.id)) return;
-        if (browser.downloads?.download) await browser.downloads.download({ url, filename, saveAs: !settings.autoSave });
-        else {
-            const anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = filename;
-            anchor.click();
-        }
+        const confirmed = await saveDownload({ url, filename, saveAs: !settings.autoSave });
+        retainURL = !confirmed;
+        task.saveUnconfirmed = !confirmed;
+        if (!partial) task.awaitingSave = false;
+        if (deletedTaskIds.has(task.id)) return;
+        if (partial) task.state = previousState;
         if (!partial) {
             task.state = "complete";
             task.completedAt = Date.now();
-            if (settings.clearCacheAfterSave) {
-                try {
-                    await clearTaskParts("outputs", task.id);
-                    await clearTaskParts("segments", task.id);
-                    task.cacheCleared = true;
-                } catch (error) {
-                    task.outputWarning = t("video_saved_cache_cleanup_failed", error.message);
-                }
-            }
+            await saveTask(task);
+            if (await requestExportCleanup(task, filename, confirmed)) await deleteTask(task, undefined, true);
         }
-    } finally { setTimeout(() => URL.revokeObjectURL(url), 60_000); }
+    } catch (error) {
+        task.state = "error";
+        task.error = error.message;
+        await saveTask(task);
+        throw error;
+    } finally { if (!retainURL) URL.revokeObjectURL(url); }
     await saveTask(task);
 }
 
@@ -332,6 +333,8 @@ async function assembleDirect(task, partial) {
     if (deletedTaskIds.has(task.id)) return;
     const parts = await taskSegments(task.id, "direct");
     if (!parts.length) throw new Error(t("no_downloaded_file_data"));
+    const previousState = task.state;
+    task.error = "";
     task.state = "assembling";
     await saveTask(task);
     const extension = task.mediaType && task.mediaType !== "unknown" ? task.mediaType : "";
@@ -340,30 +343,43 @@ async function assembleDirect(task, partial) {
     const blob = new Blob(parts.map(part => part.blob), { type: task.mime || "application/octet-stream" });
     const url = URL.createObjectURL(blob);
     const settings = await loadSettings();
+    let retainURL = false;
     try {
         if (deletedTaskIds.has(task.id)) return;
-        if (browser.downloads?.download) await browser.downloads.download({ url, filename, saveAs: !settings.autoSave });
-        else {
-            const anchor = document.createElement("a");
-            anchor.href = url;
-            anchor.download = filename;
-            anchor.click();
-        }
+        const confirmed = await saveDownload({ url, filename, saveAs: !settings.autoSave });
+        retainURL = !confirmed;
+        task.saveUnconfirmed = !confirmed;
+        if (!partial) task.awaitingSave = false;
+        if (deletedTaskIds.has(task.id)) return;
+        if (partial) task.state = previousState;
         if (!partial) {
             task.state = "complete";
             task.completedAt = Date.now();
-            if (settings.clearCacheAfterSave) {
-                try {
-                    await clearTaskParts("segments", task.id);
-                    task.cacheCleared = true;
-                } catch (error) {
-                    task.outputWarning = t("file_saved_cache_cleanup_failed", error.message);
-                }
-            }
+            await saveTask(task);
+            if (await requestExportCleanup(task, filename, confirmed)) await deleteTask(task, undefined, true);
         }
+    } catch (error) {
+        task.state = "error";
+        task.error = error.message;
+        await saveTask(task);
+        throw error;
     } finally {
-        setTimeout(() => URL.revokeObjectURL(url), 60_000);
+        if (!retainURL) URL.revokeObjectURL(url);
     }
+    await saveTask(task);
+}
+
+// Download completion and user-requested export are separate actions.
+async function finishDownload(task) {
+    if (deletedTaskIds.has(task.id)) return;
+    const settings = await loadSettings();
+    if (deletedTaskIds.has(task.id)) return;
+    if (settings.autoSave) return assemble(task, false);
+    task.state = "complete";
+    task.completedAt = Date.now();
+    task.awaitingSave = true;
+    task.saveUnconfirmed = false;
+    task.error = "";
     await saveTask(task);
 }
 
@@ -448,8 +464,8 @@ function pauseTask(task) {
     saveTask(task);
 }
 
-async function deleteTask(task) {
-    if (!confirm(t("delete_task_confirm", task.filename))) return;
+async function deleteTask(task, message = t("delete_task_confirm", task.filename), alreadyConfirmed = false) {
+    if (!alreadyConfirmed && !confirm(message)) return;
     deletedTaskIds.add(task.id);
     active.get(task.id)?.abort();
     try {
@@ -486,16 +502,53 @@ async function clearAllTasks() {
     if (failed.length) alert(t("clear_tasks_failed", [String(failed.length), failed[0].reason?.message || String(failed[0].reason)]));
 }
 
+// A page dialog remains visible even when export finishes outside a user gesture.
+function requestExportCleanup(task, filename, confirmed) {
+    if (deletedTaskIds.has(task.id)) return Promise.resolve(false);
+    const dialog = document.createElement("dialog");
+    dialog.className = "export-cleanup";
+    const title = document.createElement("h2");
+    title.textContent = t(confirmed ? "export_cleanup_title" : "export_requested_title");
+    const message = document.createElement("p");
+    message.textContent = t(confirmed ? "export_complete_cleanup" : "export_unconfirmed_cleanup", filename);
+    const actions = document.createElement("div");
+    const keep = document.createElement("button");
+    keep.textContent = t("keep_task_cache");
+    const remove = document.createElement("button");
+    remove.className = "primary";
+    remove.textContent = t(confirmed ? "delete_task_cache" : "saved_delete_task_cache");
+    actions.append(keep, remove);
+    dialog.append(title, message, actions);
+    document.body.append(dialog);
+    return new Promise(resolve => {
+        let accepted = false;
+        dialog.addEventListener("close", () => {
+            dialog.remove();
+            resolve(accepted && !deletedTaskIds.has(task.id));
+        }, { once: true });
+        keep.addEventListener("click", () => dialog.close());
+        remove.addEventListener("click", () => { accepted = true; dialog.close(); });
+        dialog.showModal();
+        keep.focus();
+    });
+}
+
 function statusText(task) {
+    if (task.state === "complete" && task.awaitingSave) return t("status_cached");
+    if (task.state === "complete" && task.saveUnconfirmed) return t("status_save_requested");
     return t(`status_${task.state}`) === `status_${task.state}` ? task.state : t(`status_${task.state}`);
 }
 
 function render() {
     const list = document.querySelector("#task-list");
-    list.replaceChildren();
+    const rows = new Map(Array.from(list.children, node => [node.dataset.taskId, node]));
+    const visibleIds = new Set(tasks.map(task => task.id));
+    for (const [id, node] of rows) if (!visibleIds.has(id)) node.remove();
+    let rowIndex = 0;
     document.querySelector("#empty").hidden = Boolean(tasks.length);
     for (const task of [...tasks].sort((a, b) => b.createdAt - a.createdAt)) {
-        const node = document.querySelector("#task-template").content.firstElementChild.cloneNode(true);
+        const node = rows.get(task.id) || document.querySelector("#task-template").content.firstElementChild.cloneNode(true);
+        node.dataset.taskId = task.id;
         node.dataset.state = task.state;
         const isDirect = task.kind === "direct";
         node.querySelector(".task-icon").textContent = isDirect ? (task.mediaType && task.mediaType !== "unknown" ? task.mediaType : task.mediaKind || "FILE") : "HLS";
@@ -515,19 +568,22 @@ function render() {
         node.querySelector(".speed").textContent = task.speed ? `${formatBytes(task.speed)}/s` : `${percent}%`;
         node.querySelector(".error").textContent = task.error || "";
         const toggle = node.querySelector('[data-action="toggle"]');
-        const needsAudioCheck = !isDirect && task.state === "complete" && task.sourceURL && !task.audioDiscoveryDone;
-        toggle.textContent = task.state === "running" ? t("pause") : needsAudioCheck ? t("detect_audio_track") : task.state === "complete" && task.cacheCleared ? t("download_again") : task.state === "complete" ? t("export_again") : t("resume");
-        toggle.addEventListener("click", () => task.state === "running" ? pauseTask(task) : needsAudioCheck || (task.state === "complete" && task.cacheCleared) ? runTask(task) : task.state === "complete" ? assemble(task, false) : runTask(task));
-        node.querySelector('[data-action="partial"]').addEventListener("click", () => assemble(task, true).catch(error => alert(error.message)));
-        node.querySelector('[data-action="rename"]').addEventListener("click", async () => {
+        const needsAudioCheck = !task.awaitingSave && !isDirect && task.state === "complete" && task.sourceURL && !task.audioDiscoveryDone;
+        toggle.textContent = task.state === "running" ? t("pause") : needsAudioCheck ? t("detect_audio_track") : task.state === "complete" && task.cacheCleared ? t("download_again") : task.state === "complete" ? t(task.awaitingSave ? "save_to_device" : "export_again") : t("resume");
+        toggle.disabled = task.state === "assembling";
+        node.querySelector('[data-action="partial"]').disabled = task.state === "assembling";
+        toggle.onclick = () => task.state === "running" ? pauseTask(task) : needsAudioCheck || (task.state === "complete" && task.cacheCleared) ? runTask(task) : task.state === "complete" ? assemble(task, false).catch(error => alert(error.message)) : runTask(task);
+        node.querySelector('[data-action="partial"]').onclick = () => assemble(task, true).catch(error => alert(error.message));
+        node.querySelector('[data-action="rename"]').onclick = async () => {
             const value = prompt(t("new_filename"), task.filename);
             const extension = isDirect
                 ? (task.mediaType !== "unknown" ? task.mediaType : "")
                 : ((task.outputContainer || task.container) === "mpegts" && !task.audioURL ? "ts" : "mp4");
             if (value) { task.filename = safeFilename(value, extension); await saveTask(task); }
-        });
-        node.querySelector('[data-action="delete"]').addEventListener("click", () => deleteTask(task));
-        list.appendChild(node);
+        };
+        node.querySelector('[data-action="delete"]').onclick = () => deleteTask(task);
+        if (list.children[rowIndex] !== node) list.insertBefore(node, list.children[rowIndex] || null);
+        rowIndex += 1;
     }
     document.querySelector("#running-count").textContent = tasks.filter(task => ["running", "assembling"].includes(task.state)).length;
     document.querySelector("#complete-count").textContent = tasks.filter(task => task.state === "complete").length;

@@ -8,7 +8,7 @@
 </head>
 <body>
     <header>
-        <div class="brand"><span class="logo">V</span><div><strong>GetV</strong><small id="page-title" data-i18n="scanning_page">Scanning page…</small></div></div>
+        <div class="brand"><img class="logo" src="images/icon-96.png" alt="" width="36" height="36"><div><strong>GetV</strong><small id="page-title" data-i18n="scanning_page">Scanning page…</small></div></div>
         <button id="open-manager" class="icon-button" title="Download manager" data-i18n-title="download_manager">↗</button>
     </header>
     <nav aria-label="Mode" data-i18n-aria-label="mode">
@@ -48,12 +48,8 @@
                     <select id="setting-threads" aria-label="Download threads" data-i18n-aria-label="download_threads"><option>2</option><option>4</option><option>6</option><option>8</option><option>12</option></select>
                 </div>
                 <div class="setting-row">
-                    <label for="setting-auto-save"><strong data-i18n="auto_save">Auto Save</strong><small data-i18n="auto_save_help">Save directly to Safari’s default download location</small></label>
+                    <label for="setting-auto-save"><strong data-i18n="auto_save">Auto Save</strong><small data-i18n="auto_save_help">Automatically save when downloading finishes; when off, keep in cache until you click Save to Device</small></label>
                     <label class="switch"><input id="setting-auto-save" type="checkbox"><span aria-hidden="true"></span></label>
-                </div>
-                <div class="setting-row">
-                    <label for="setting-clear-cache"><strong data-i18n="clear_cache">Clear Cache</strong><small data-i18n="clear_cache_help">Clear cached segments after a complete video is saved</small></label>
-                    <label class="switch"><input id="setting-clear-cache" type="checkbox"><span aria-hidden="true"></span></label>
                 </div>
                 <div class="setting-row setting-row-stack">
                     <label for="setting-file-naming"><strong data-i18n="file_naming">File Naming</strong><small data-i18n="file_naming_help">Default source for downloaded filenames</small></label>
