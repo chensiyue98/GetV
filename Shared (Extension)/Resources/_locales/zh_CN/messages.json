@@ -1,4 +1,6 @@
 {
+  "show_audio":{"message":"显示音频文件"},
+  "show_audio_help":{"message":"在检测结果中显示音频文件"},
   "extension_name":{"message":"GetV"},
   "extension_description":{"message":"查找并保存当前页面中的视频、音频和 HLS 流。"},
   "scanning_page":{"message":"正在扫描页面…"},

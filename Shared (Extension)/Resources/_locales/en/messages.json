@@ -1,4 +1,6 @@
 {
+  "show_audio":{"message":"Show Audio Files"},
+  "show_audio_help":{"message":"Include audio files in detected resources"},
   "extension_name": {"message":"GetV"},
   "extension_description": {"message":"Find and save video, audio, and HLS streams from the current page."},
   "scanning_page": {"message":"Scanning page…"},

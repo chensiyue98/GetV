@@ -230,16 +230,18 @@ export function collapseDuplicateMediaEntries(entries = []) {
 }
 
 export function filterMediaEntries(entries = [], settings = {}) {
-    if (settings.filterEnabled === false) return [...entries];
     const minHeight = Math.max(0, Number(settings.minVideoHeight) || 0);
     const minDuration = Math.max(0, Number(settings.minMediaDuration) || 0);
     const audioTypes = new Set(["mp3", "m4a", "aac"]);
     return entries.filter(entry => {
         const candidate = entry?.candidate || {};
+        const isAudio = audioTypes.has(candidate.type) || candidate.mediaKind === "audio" || /^audio\//i.test(candidate.mime || "");
+        if (isAudio && !settings.showAudio) return false;
+        if (settings.filterEnabled === false) return true;
         const playlistHeights = (entry?.playlist?.variants || []).map(variant => Number(variant.height) || 0);
         const height = Math.max(Number(candidate.height) || 0, ...playlistHeights);
         const duration = Math.max(Number(candidate.duration) || 0, Number(entry?.playlist?.duration) || 0);
-        if (!audioTypes.has(candidate.type) && candidate.mediaKind !== "audio" && minHeight && height && height < minHeight) return false;
+        if (!isAudio && minHeight && height && height < minHeight) return false;
         if (minDuration && duration && duration < minDuration) return false;
         return true;
     });

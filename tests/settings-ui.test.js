@@ -4,7 +4,7 @@ import fs from "node:fs";
 
 test("popup exposes all requested download settings", () => {
     const html = fs.readFileSync(new URL("../Shared (Extension)/Resources/popup.html", import.meta.url), "utf8");
-    for (const id of ["setting-threads", "setting-auto-save", "setting-file-naming", "setting-show-badge", "setting-filter-enabled", "setting-min-height", "setting-min-duration"]) {
+    for (const id of ["setting-threads", "setting-auto-save", "setting-file-naming", "setting-show-badge", "setting-filter-enabled", "setting-show-audio", "setting-min-height", "setting-min-duration"]) {
         assert.match(html, new RegExp(`id="${id}"`));
     }
     assert.match(html, /Webpage Title/);

@@ -6,6 +6,7 @@ export const DEFAULT_SETTINGS = Object.freeze({
     fileNaming: "webpage-title",
     showBadge: true,
     filterEnabled: true,
+    showAudio: false,
     minVideoHeight: 240,
     minMediaDuration: 10
 });
@@ -23,6 +24,7 @@ function normalizeSettings(value = {}) {
         fileNaming: FILE_NAMING_OPTIONS.has(value.fileNaming) ? value.fileNaming : DEFAULT_SETTINGS.fileNaming,
         showBadge: value.showBadge == null ? DEFAULT_SETTINGS.showBadge : Boolean(value.showBadge),
         filterEnabled: value.filterEnabled == null ? DEFAULT_SETTINGS.filterEnabled : Boolean(value.filterEnabled),
+        showAudio: value.showAudio == null ? DEFAULT_SETTINGS.showAudio : Boolean(value.showAudio),
         minVideoHeight: VIDEO_HEIGHT_OPTIONS.has(Number(value.minVideoHeight)) ? Number(value.minVideoHeight) : DEFAULT_SETTINGS.minVideoHeight,
         minMediaDuration: MEDIA_DURATION_OPTIONS.has(Number(value.minMediaDuration)) ? Number(value.minMediaDuration) : DEFAULT_SETTINGS.minMediaDuration
     };

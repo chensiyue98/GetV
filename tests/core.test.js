@@ -80,7 +80,7 @@ test("collapses duplicate URLs while keeping the best media metadata", () => {
 });
 
 test("filters only media with known metadata below configured thresholds", () => {
-    const settings = { filterEnabled: true, minVideoHeight: 240, minMediaDuration: 10 };
+    const settings = { filterEnabled: true, showAudio: true, minVideoHeight: 240, minMediaDuration: 10 };
     const preview = { candidate: { url: "https://video.test/preview.mp4", type: "mp4", width: 256, height: 144, duration: 5 } };
     const unknown = { candidate: { url: "https://video.test/stream", type: "hls" } };
     const audio = { candidate: { url: "https://audio.test/show.mp3", type: "mp3", width: 300, height: 54, duration: 120 } };
@@ -146,4 +146,20 @@ test("compacts long signed media URLs for the popup", () => {
         "edge1-vienna.example.com/…/master.m3u8"
     );
     assert.equal(compactMediaURL("https://media.example.com/movie.mp4"), "media.example.com/movie.mp4");
+});
+
+test("hides audio by default independently of quality filtering", () => {
+    const audio = [
+        { candidate: { type: "mp3" } },
+        { candidate: { type: "m4a" } },
+        { candidate: { type: "aac" } },
+        { candidate: { type: "unknown", mediaKind: "audio" } },
+        { candidate: { type: "webm", mime: "audio/webm" } }
+    ];
+    const video = { candidate: { type: "mp4" } };
+    const entries = [...audio, video];
+    assert.deepEqual(filterMediaEntries(entries), [video]);
+    assert.deepEqual(filterMediaEntries(entries, { filterEnabled: false }), [video]);
+    assert.deepEqual(filterMediaEntries(entries, { showAudio: true }), entries);
+    assert.deepEqual(filterMediaEntries(entries, { showAudio: true, filterEnabled: false }), entries);
 });

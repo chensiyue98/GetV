@@ -190,6 +190,7 @@ async function initializeSettings() {
     $("#setting-file-naming").value = settings.fileNaming;
     $("#setting-show-badge").checked = settings.showBadge;
     $("#setting-filter-enabled").checked = settings.filterEnabled;
+    $("#setting-show-audio").checked = settings.showAudio;
     $("#setting-min-height").value = String(settings.minVideoHeight);
     $("#setting-min-duration").value = String(settings.minMediaDuration);
     const syncFilterControls = () => {
@@ -205,12 +206,13 @@ async function initializeSettings() {
             fileNaming: $("#setting-file-naming").value,
             showBadge: $("#setting-show-badge").checked,
             filterEnabled: $("#setting-filter-enabled").checked,
+            showAudio: $("#setting-show-audio").checked,
             minVideoHeight: Number($("#setting-min-height").value),
             minMediaDuration: Number($("#setting-min-duration").value)
         });
         toast(t("settings_saved"));
     };
-    const filterControls = new Set(["#setting-filter-enabled", "#setting-min-height", "#setting-min-duration"]);
+    const filterControls = new Set(["#setting-show-audio", "#setting-filter-enabled", "#setting-min-height", "#setting-min-duration"]);
     for (const id of ["#setting-threads", "#setting-auto-save", "#setting-file-naming", "#setting-show-badge", ...filterControls]) {
         $(id).addEventListener("change", () => {
             if (id === "#setting-filter-enabled") syncFilterControls();

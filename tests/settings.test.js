@@ -20,6 +20,7 @@ test("uses safe defaults for download settings", async () => {
         fileNaming: "webpage-title",
         showBadge: true,
         filterEnabled: true,
+        showAudio: false,
         minVideoHeight: 240,
         minMediaDuration: 10
     });
@@ -35,6 +36,7 @@ test("persists and normalizes download settings", async () => {
         fileNaming: "webpage-title",
         showBadge: true,
         filterEnabled: true,
+        showAudio: false,
         minVideoHeight: 240,
         minMediaDuration: 10
     });
@@ -61,4 +63,13 @@ test("persists and validates resource filter settings", async () => {
     assert.equal(saved.filterEnabled, true);
     assert.equal(saved.minVideoHeight, 240);
     assert.equal(saved.minMediaDuration, 10);
+});
+
+test("defaults existing settings to hidden audio and persists the audio preference", async () => {
+    const storage = memoryStorage({ filterEnabled: false });
+    assert.equal((await loadSettings(storage)).showAudio, false);
+    await saveSettings({ showAudio: true }, storage);
+    assert.equal((await loadSettings(storage)).showAudio, true);
+    await saveSettings({ showAudio: false }, storage);
+    assert.equal((await loadSettings(storage)).showAudio, false);
 });
