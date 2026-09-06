@@ -203,7 +203,7 @@ jobs:
             desc "Safari extension for discovering and downloading non-DRM media"
             homepage "https://github.com/chensiyue98/GetV"
 
-            depends_on macos: ">= :monterey"
+            depends_on macos: :monterey
 
             app "get-v.app"
 
